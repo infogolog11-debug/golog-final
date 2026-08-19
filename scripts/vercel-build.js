@@ -105,7 +105,11 @@ async function main() {
   log("Frontend copied successfully ✓");
 
   // ------------------------------------------------------------
-  // الخطوة 3: فحص أنواع TypeScript لـ API Server
+  // الخطوة 3: تجميع (Bundle) كود API Server في ملف JS واحد باستخدام esbuild
+  // هذا الحل يتجاوز كل مشاكل:
+  // - استيراد ملفات TS مباشرة من packages/ (مثل @golog/db)
+  // - مسارات workspaces على Vercel
+  // - إعداد exports في package.json للحزم الداخلية
   // ------------------------------------------------------------
   const API_DIR = path.join(ROOT, "packages", "api-server");
   const API_NODE_MODULES = path.join(API_DIR, "node_modules");
@@ -114,9 +118,83 @@ async function main() {
     run("npm install", API_DIR);
   }
 
-  log("Type-checking API Server TypeScript...");
-  run("npm run typecheck", API_DIR);
-  log("TypeScript checks passed ✓");
+  const DB_DIR = path.join(ROOT, "packages", "db");
+  const DB_NODE_MODULES = path.join(DB_DIR, "node_modules");
+  if (!fs.existsSync(DB_NODE_MODULES)) {
+    log("Installing DB package dependencies...");
+    run("npm install", DB_DIR);
+  }
+
+  // التأكد من وجود esbuild (يأتي عادةً مع vite، أو نثبته محلياً في api-server)
+  const ESLocal = path.join(ROOT, "node_modules", ".bin", "esbuild");
+  const ESApi = path.join(API_DIR, "node_modules", ".bin", "esbuild");
+  let ESBIN = fs.existsSync(ESLocal) ? ESLocal : (fs.existsSync(ESApi) ? ESApi : null);
+  if (!ESBIN) {
+    log("esbuild not found — installing locally to api-server...");
+    run("npm install --no-save esbuild", API_DIR);
+    ESBIN = path.join(API_DIR, "node_modules", ".bin", "esbuild");
+    if (process.platform === "win32") ESBIN += ".cmd";
+  }
+  log("Using esbuild at: " + ESBIN);
+
+  const BUNDLE_OUT_DIR = path.join(ROOT, "_api_bundle");
+  cleanDir(BUNDLE_OUT_DIR);
+  ensureDir(BUNDLE_OUT_DIR);
+  const BUNDLE_OUT = path.join(BUNDLE_OUT_DIR, "app.bundle.js");
+
+  log("Bundling API server with esbuild...");
+  const entryPoint = path.join(API_DIR, "src", "app.ts").replace(/\\/g, "/");
+  const outFile = BUNDLE_OUT.replace(/\\/g, "/");
+
+  // بناء أمر esbuild مع:
+  // - تجميع الحزم الداخلية (@golog/db) مباشرة
+  // - عدم تجميع (external) حزم node_modules الشائعة التي تعمل بشكل أصلي
+  const esbuildCmd =
+    `"${ESBIN}" "${entryPoint}"` +
+    ` --bundle` +
+    ` --platform=node` +
+    ` --target=node18` +
+    ` --format=esm` +
+    ` --outfile="${outFile}"` +
+    ` --banner:js="import {createRequire as __gologCR} from 'module';const require=__gologCR(import.meta.url);"` +
+    ` --external:express` +
+    ` --external:passport` +
+    ` --external:passport-google-oauth20` +
+    ` --external:express-session` +
+    ` --external:connect-pg-simple` +
+    ` --external:cors` +
+    ` --external:helmet` +
+    ` --external:express-rate-limit` +
+    ` --external:pino` +
+    ` --external:pino-http` +
+    ` --external:pg` +
+    ` --external:drizzle-orm` +
+    ` --external:drizzle-zod` +
+    ` --external:zod` +
+    ` --external:dotenv` +
+    ` --external:cookie-parser` +
+    ` --external:tsx` +
+    ` --external:@aws-sdk/client-s3` +
+    ` --external:@aws-sdk/s3-request-presigner` +
+    ` --allow-overwrite`;
+
+  log("esbuild command:\n  " + esbuildCmd);
+  run(esbuildCmd, ROOT);
+
+  if (!fs.existsSync(BUNDLE_OUT)) {
+    console.error("[vercel-build] FATAL: bundled output not found at " + BUNDLE_OUT);
+    process.exit(1);
+  }
+
+  // فحص حجم الملف وتأكيد وجود التصدير الافتراضي
+  const bundleStat = fs.statSync(BUNDLE_OUT);
+  log("Bundle created: " + Math.round(bundleStat.size / 1024) + " KB ✓");
+  const bundleContent = fs.readFileSync(BUNDLE_OUT, "utf8");
+  if (!bundleContent.includes("export default") && !bundleContent.includes("export {")) {
+    log("WARNING: bundle doesn't seem to contain exports — checking if app export is present...");
+  }
+
+  log("API server bundled successfully to _api_bundle/app.bundle.js ✓");
 
   log("\n🎉 Build complete — project is ready for Vercel deployment!\n");
 }

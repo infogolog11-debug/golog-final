@@ -25,7 +25,7 @@ let cachedApp: any = null;
 async function getExpressApp() {
   if (cachedApp) return cachedApp;
   try {
-    const mod = await import("../packages/api-server/src/app");
+    const mod = await import("../_api_bundle/app.bundle.js");
     cachedApp = mod.default || mod;
     return cachedApp;
   } catch (err) {

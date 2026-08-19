@@ -2,6 +2,7 @@ node_modules/
 .npm/
 .cache/
 dist/
+_api_bundle/
 build/
 .env
 .env.local
