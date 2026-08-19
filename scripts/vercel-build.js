@@ -148,15 +148,15 @@ async function main() {
 
   // بناء أمر esbuild مع:
   // - تجميع الحزم الداخلية (@golog/db) مباشرة
-  // - عدم تجميع (external) حزم node_modules الشائعة التي تعمل بشكل أصلي
+  // - عدم تجميع (external) حزم node_modules الشائعة
+  // - format=cjs لأن دوال Vercel تعمل افتراضياً بصيغة CommonJS
   const esbuildCmd =
     `"${ESBIN}" "${entryPoint}"` +
     ` --bundle` +
     ` --platform=node` +
     ` --target=node18` +
-    ` --format=esm` +
+    ` --format=cjs` +
     ` --outfile="${outFile}"` +
-    ` --banner:js="import {createRequire as __gologCR} from 'module';const require=__gologCR(import.meta.url);"` +
     ` --external:express` +
     ` --external:passport` +
     ` --external:passport-google-oauth20` +

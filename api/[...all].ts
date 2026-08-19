@@ -21,11 +21,13 @@ if (!process.env.VERCEL) {
   }
 }
 
-let cachedApp = null;
-async function getExpressApp() {
+let cachedApp: any = null;
+function getExpressApp() {
   if (cachedApp) return cachedApp;
   try {
-    const mod = await import("../_api_bundle/app.bundle.js");
+    const path = require("path") as typeof import("path");
+    const bundlePath = path.resolve(__dirname, "..", "_api_bundle", "app.bundle.js");
+    const mod = require(bundlePath);
     cachedApp = mod.default || mod;
     return cachedApp;
   } catch (err) {
@@ -34,9 +36,9 @@ async function getExpressApp() {
   }
 }
 
-export default async function handler(req, res) {
+export default async function handler(req: any, res: any) {
   try {
-    const app = await getExpressApp();
+    const app = getExpressApp();
     if (!app || typeof app !== "function") {
       return res.status(500).json({
         error: "API failed to boot",
@@ -44,26 +46,26 @@ export default async function handler(req, res) {
       });
     }
     return new Promise((resolve) => {
-      app(req, res, (err) => {
+      app(req, res, (err?: any) => {
         if (err) {
           console.error("[vercel catch-all] Express error:", err);
           if (!res.headersSent) {
             res.status(500).json({
               error: "Internal server error",
-              message: err && err.message ? err.message : String(err),
+              message: err?.message || String(err),
             });
           }
         }
         resolve(undefined);
       });
     });
-  } catch (e) {
+  } catch (e: any) {
     console.error("[vercel catch-all] FATAL:", e);
-    const message = e && e.message ? e.message : String(e);
+    const message = e?.message || String(e);
     return res.status(500).json({
       error: "API crashed",
       message,
-      stack: process.env.NODE_ENV === "production" ? undefined : (e && e.stack ? e.stack : undefined),
+      stack: process.env.NODE_ENV === "production" ? undefined : e?.stack,
     });
   }
 }

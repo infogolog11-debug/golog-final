@@ -22,10 +22,12 @@ if (!process.env.VERCEL) {
 
 let cachedApp: any = null;
 
-async function getExpressApp() {
+function getExpressApp() {
   if (cachedApp) return cachedApp;
   try {
-    const mod = await import("../_api_bundle/app.bundle.js");
+    const path = require("path") as typeof import("path");
+    const bundlePath = path.resolve(__dirname, "..", "_api_bundle", "app.bundle.js");
+    const mod = require(bundlePath);
     cachedApp = mod.default || mod;
     return cachedApp;
   } catch (err) {
@@ -36,7 +38,7 @@ async function getExpressApp() {
 
 export default async function (req: any, res: any) {
   try {
-    const app = await getExpressApp();
+    const app = getExpressApp();
     if (!app || typeof app !== "function") {
       return res.status(500).json({
         error: "API failed to boot",

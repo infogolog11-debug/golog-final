@@ -7,7 +7,6 @@ import rateLimit from "express-rate-limit";
 import pinoHttp from "pino-http";
 import path from "path";
 import fs from "fs";
-import { fileURLToPath } from "url";
 import router from "./routes/index";
 import { logger } from "./lib/logger";
 import passport from "./lib/passport";
@@ -99,13 +98,7 @@ app.use(passport.session());
 app.use("/api", router);
 
 let staticDir: string;
-try {
-  const __filename = fileURLToPath(import.meta.url);
-  const __dirname = path.dirname(__filename);
-  staticDir = path.join(__dirname, "..", "public");
-} catch {
-  staticDir = path.join(process.cwd(), "packages", "api-server", "public");
-}
+staticDir = path.join(process.cwd(), "public");
 
 if (fs.existsSync(staticDir)) {
   app.use(express.static(staticDir));
