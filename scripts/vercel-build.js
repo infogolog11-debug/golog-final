@@ -34,6 +34,27 @@ function run(cmd, cwd) {
   }
 }
 
+/**
+ * نفس `run()` ولكن لا تنهار عند الخطأ؛ فقط تُظهر تحذيراً واصفراراً.
+ * نستخدمها لخطوات إضافية مثل drizzle-push التي قد تفشل
+ * في أول نشر قبل إعداد قاعدة البيانات.
+ */
+function runSoft(cmd, cwd) {
+  log("[soft] Running: " + cmd);
+  const result = spawnSync(cmd, {
+    shell: true,
+    cwd: cwd || ROOT,
+    stdio: "inherit",
+    env: Object.assign({}, process.env, { CI: "true" }),
+  });
+  if (result.status !== 0) {
+    console.warn("⚠️  [vercel-build] NON-FATAL: command failed: " + cmd);
+    console.warn("   → status code: " + result.status);
+    console.warn("   → (we continue build because DB setup might be intentionally skipped)");
+  }
+  return result.status === 0;
+}
+
 function ensureDir(dir) {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
@@ -73,6 +94,32 @@ async function main() {
     run("npm install", ROOT);
   } else {
     log("Workspace dependencies already installed");
+  }
+
+  // ------------------------------------------------------------
+  // الخطوة 0.5 (جديدة): مطابقة الجداول في قاعدة البيانات (drizzle-kit push)
+  // ------------------------------------------------------------
+  // ينشئ كل الجداول المطلوبة (users, trips, bookings, ...) تلقائياً
+  // إذا كان DATABASE_URL متاحاً. الخطوة غير قاتلة (non-fatal) حتى لا
+  // ينهار النشر إذا كان المستخدم قد لم يضف متغير البيئة بعد في Vercel.
+  const DB_DIR = path.join(ROOT, "packages", "db");
+  const DB_NODE_MODULES = path.join(DB_DIR, "node_modules");
+  if (!fs.existsSync(DB_NODE_MODULES)) {
+    log("Installing DB package dependencies (packages/db)...");
+    run("npm install", DB_DIR);
+  }
+
+  if (process.env.DATABASE_URL) {
+    log("DATABASE_URL found! Running drizzle-kit push to sync DB schema...");
+    const ok = runSoft("npx drizzle-kit push --config ./drizzle.config.ts", DB_DIR);
+    if (ok) {
+      log("✅ DB schema synced successfully with database");
+    } else {
+      log("⚠️  drizzle-kit push failed (non-fatal) — check DB credentials/URL. You can also run manually.");
+    }
+  } else {
+    log("⚠️  DATABASE_URL is NOT set in environment variables — skipping drizzle push (DB schema NOT created).");
+    log("   → Add DATABASE_URL to Vercel Project Settings → Environment Variables, then redeploy.");
   }
 
   // ------------------------------------------------------------
@@ -118,10 +165,9 @@ async function main() {
     run("npm install", API_DIR);
   }
 
-  const DB_DIR = path.join(ROOT, "packages", "db");
-  const DB_NODE_MODULES = path.join(DB_DIR, "node_modules");
-  if (!fs.existsSync(DB_NODE_MODULES)) {
-    log("Installing DB package dependencies...");
+  const DB_NODE_MODULES_EXIST_CHECK = path.join(DB_DIR, "node_modules");
+  if (!fs.existsSync(DB_NODE_MODULES_EXIST_CHECK)) {
+    log("Installing DB package dependencies (packages/db)...");
     run("npm install", DB_DIR);
   }
 

@@ -97,15 +97,85 @@ app.use(passport.session());
 
 app.use("/api", router);
 
-let staticDir: string;
-staticDir = path.join(process.cwd(), "public");
+/* ============================================================
+   Fallback نهائي لـ Single-Page App (SPA)
+   ------------------------------------------------------------
+   نحدد موقع مجلد الـ static (الملفات الثابتة للواجهة الأمامية)
+   بأقصى قدر من المرونة؛ لأن مسار process.cwd() قد يختلف بين
+   بيئة Vercel أثناء البناء وبيئة تشغيل الوظائف (Serverless).
 
-if (fs.existsSync(staticDir)) {
-  app.use(express.static(staticDir));
-  app.get(/^(?!\/api).*/, (_req, res) => {
-    res.sendFile(path.join(staticDir, "index.html"));
+   نقوم بالبحث في قائمة بالمسارات الأكثر احتمالاً:
+     1. <process.cwd()>/public            ← الإعداد القياسي بعد البناء
+     2. <process.cwd()>/../public         ← للاحتياط عند تشغيل الوظيفة من مجلد api
+     3. <__dirname>/../../public          ← المسار من داخل bundles (CJS)
+   أياً وجدناه أولاً نستخدمه.
+   ============================================================ */
+function findStaticDir(): string | null {
+  const candidates = [
+    path.join(process.cwd(), "public"),
+    path.join(process.cwd(), "..", "public"),
+    path.resolve(__dirname, "..", "..", "public"),
+    path.resolve(__dirname, "..", "public"),
+  ];
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p) && fs.statSync(p).isDirectory()) {
+        return p;
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return null;
+}
+
+const staticDir = findStaticDir();
+
+if (staticDir) {
+  logger.info("serving frontend static files from: " + staticDir);
+  // خدمة الملفات الثابتة (assets, images, js, css, ...)
+  app.use(express.static(staticDir, {
+    maxAge: IS_PRODUCTION ? "1y" : 0,
+    index: false, // لا تعرض index.html افتراضياً؛ نريد التحكم بالمسار بأنفسنا
+  }));
+
+  // ============================================================
+  // SPA Fallback قوي: أي GET طلب (باستثناء /api/* وملفات
+  // ذات امتداد ثابت معروف) → نعيد index.html
+  // حتى لو فشلت قواعد rewrites في vercel.json، يضمن هذا
+  // أن المستخدم لن يرى 404 أبداً.
+  // ============================================================
+  const KNOWN_EXT_RE = /\.(?:js|mjs|cjs|css|map|png|jpe?g|gif|webp|avif|svg|ico|woff2?|ttf|otf|eot|json|txt|xml|webmanifest)$/i;
+
+  app.get("*", (req, res, next) => {
+    // تجاهل أي مسار يبدأ بـ /api (يتعامل معه الـ router أعلاه)
+    if (req.path.startsWith("/api")) return next();
+    // تجاهل أي مسار يحتوي على امتداد ملف ثابت معروف
+    if (KNOWN_EXT_RE.test(req.path)) return next();
+    // كل شيء آخر → صفحة React الرئيسية (Wouter سيعالج المسار)
+    const indexHtml = path.join(staticDir, "index.html");
+    if (!fs.existsSync(indexHtml)) return next();
+    res.sendFile(indexHtml);
   });
-  logger.info("serving frontend from " + staticDir);
+} else {
+  logger.warn(
+    "⚠️  لم يتم العثور على مجلد public/ للواجهة الأمامية! " +
+    "لن تتم خدمة الصفحات (SPA fallback معطّل). " +
+    "تأكد من نجاح مرحلة البناء (build) ووجود مجلد /public في جذر المشروع."
+  );
+  // Fallback طارئ حتى لو لم يكن هناك public: نرسل صفحة بسيطة
+  // تخبر المستخدم أن البناء قد فشل أو لم يكتمل بعد.
+  app.get("*", (req, res, next) => {
+    if (req.path.startsWith("/api")) return next();
+    res.type("html").send(
+      "<!doctype html>" +
+      "<html><head><meta charset='utf-8'><meta http-equiv='refresh' content='3'></head>" +
+      "<body style='font-family:system-ui;max-width:60ch;margin:4rem auto;padding:1rem'>" +
+      "<h2>جاري تحميل التطبيق...</h2>" +
+      "<p>إذا رأيت هذه الرسالة لأكثر من ثوانٍ، فهذا يعني أن عملية البناء لم تكتمل بعد.</p>" +
+      "</body></html>"
+    );
+  });
 }
 
 export default app;

@@ -30,7 +30,7 @@
   ],
   "rewrites": [
     {
-      "source": "/((?!api$|api/|assets/|static/|favicon\\.ico|opengraph\\.jpg|robots\\.txt).*)",
+      "source": "/((?!api/|_next/|_static/|_vercel|[\\w-]+\\.\\w+).*)",
       "destination": "/index.html"
     }
   ]
