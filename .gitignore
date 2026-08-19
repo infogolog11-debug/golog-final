@@ -18,6 +18,8 @@ start-dev.bat
 start-web.bat
 0-FINAL-DEPLOY.bat
 COMMIT-AND-PUSH.bat
+FIX-PUSH.bat
+FINAL-FORCE-PUSH.bat
 install_log.txt
 .DS_Store
 Golog-Travel/
