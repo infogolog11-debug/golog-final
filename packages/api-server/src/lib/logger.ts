@@ -1,6 +1,7 @@
 import pino from "pino";
+import { LOG_LEVEL, IS_PRODUCTION } from "./env";
 
 export const logger = pino({
-  level: process.env.LOG_LEVEL || "info",
-  transport: process.env.NODE_ENV !== "production" ? { target: "pino-pretty" } : undefined,
+  level: LOG_LEVEL,
+  transport: !IS_PRODUCTION ? { target: "pino-pretty" } : undefined,
 });

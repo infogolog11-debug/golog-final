@@ -2,12 +2,15 @@
   "name": "golog-workspace",
   "version": "0.1.0",
   "private": true,
-  "workspaces": ["packages/*"],
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "build:web": "npm run build --workspace=@golog/web",
     "build:copy-web": "node -e \"const fs=require('fs');const p=require('path');const s=p.resolve('packages/web/dist');const d=p.resolve('packages/api-server/public');fs.rmSync(d,{recursive:true,force:true});fs.cpSync(s,d,{recursive:true});\"",
     "build:api": "npm run typecheck --workspace=@golog/api-server",
     "build": "npm run build:web && npm run build:copy-web && npm run build:api",
+    "vercel-build": "node scripts/vercel-build.js",
     "start": "npm run start --workspace=@golog/api-server",
     "dev:api": "npm run dev --workspace=@golog/api-server",
     "dev:web": "npm run dev --workspace=@golog/web"

@@ -1,8 +1,13 @@
+import { SESSION_SECRET, TELEGRAM_BOT_TOKEN } from "./env";
 import crypto from "crypto";
 
 function makeLinkCode(userId: number): string {
-  const secret = process.env.SESSION_SECRET ?? "fallback";
-  const sig = crypto.createHmac("sha256", secret).update(String(userId)).digest("hex").slice(0, 16);
+  const secret = SESSION_SECRET || "fallback";
+  const sig = crypto
+    .createHmac("sha256", secret)
+    .update(String(userId))
+    .digest("hex")
+    .slice(0, 16);
   return `${userId}_${sig}`;
 }
 
@@ -15,7 +20,7 @@ function verifyLinkCode(code: string): number | null {
 }
 
 export async function sendTelegram(chatId: string, text: string) {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const token = TELEGRAM_BOT_TOKEN;
   if (!token) return;
   await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: "POST",

@@ -2,16 +2,33 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
   "installCommand": "npm install",
-  "buildCommand": "npm run build && node -e \"const fs=require('fs');if(!fs.existsSync('packages/api-server/public/api')){fs.mkdirSync('packages/api-server/public/api',{recursive:true})}\"",
+  "buildCommand": "npm run vercel-build",
   "outputDirectory": "packages/api-server/public",
   "functions": {
     "api/index.ts": {
-      "includeFiles": "packages/api-server/src/**,packages/db/src/**,node_modules/**"
+      "maxDuration": 30
     }
   },
   "cleanUrls": true,
+  "trailingSlash": false,
+  "headers": [
+    {
+      "source": "/assets/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+      ]
+    },
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "X-Frame-Options", "value": "DENY" },
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
+      ]
+    }
+  ],
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/index.ts" },
-    { "source": "/((?!assets|static|favicon\\.ico|robots\\.txt|api).*)", "destination": "/index.html" }
+    { "source": "/api/:path*", "destination": "/api/index.ts" },
+    { "source": "/((?!api|assets|static|favicon\\.ico|opengraph\\.jpg|robots\\.txt).*)", "destination": "/index.html" }
   ]
 }

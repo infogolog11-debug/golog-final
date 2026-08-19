@@ -11,6 +11,13 @@ build/
 deploy.bat
 sync-git.bat
 push-git.bat
+push-final-v2.bat
+push-git-final.bat
+start-api.bat
+start-dev.bat
+start-web.bat
+0-FINAL-DEPLOY.bat
+COMMIT-AND-PUSH.bat
 install_log.txt
 .DS_Store
 Golog-Travel/

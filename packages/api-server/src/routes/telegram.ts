@@ -2,17 +2,14 @@ import { Router } from "express";
 import { db, usersTable } from "@golog/db";
 import { eq } from "drizzle-orm";
 import { sendTelegram, makeLinkCode, verifyLinkCode } from "../lib/telegramBot";
+import { TELEGRAM_BOT_USERNAME } from "../lib/env";
 
 const router = Router();
-
-// ملاحظة: هذا الربط منفصل تماماً عن تسجيل الدخول عبر Telegram Login Widget
-// (routes/auth.ts) — هذا فقط لربط حساب مسجَّل مسبقاً (عبر Google مثلاً) ببوت
-// الإشعارات، لمن لا يفتح التطبيق باستمرار.
 
 router.get("/telegram/link-code", async (req, res) => {
   if (!req.isAuthenticated?.()) return res.status(401).json({ error: "غير مسجّل الدخول" });
   const userId = (req.user as any).id;
-  res.json({ code: makeLinkCode(userId), botUsername: process.env.TELEGRAM_BOT_USERNAME || "GologApp_bot" });
+  res.json({ code: makeLinkCode(userId), botUsername: TELEGRAM_BOT_USERNAME });
 });
 
 router.delete("/telegram/unlink", async (req, res) => {
@@ -64,7 +61,11 @@ router.post("/telegram/webhook", async (req, res) => {
   }
 
   if (text === "/stop" || text === "/unlink") {
-    const [user] = await db.select().from(usersTable).where(eq(usersTable.telegramChatId, chatId)).limit(1);
+    const [user] = await db
+      .select()
+      .from(usersTable)
+      .where(eq(usersTable.telegramChatId, chatId))
+      .limit(1);
     if (user) {
       await db.update(usersTable).set({ telegramChatId: null }).where(eq(usersTable.id, user.id));
       await sendTelegram(chatId, "تم إلغاء ربط حسابك. لن تصلك إشعارات بعد الآن.");

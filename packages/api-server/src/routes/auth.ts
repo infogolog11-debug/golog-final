@@ -3,24 +3,46 @@ import passport from "../lib/passport";
 import { db, usersTable } from "@golog/db";
 import { eq } from "drizzle-orm";
 import { verifyTelegramLogin, type TelegramLoginPayload } from "../lib/telegramAuth";
+import { GOOGLE_CLIENT_ID } from "../lib/env";
 
 const router = Router();
 
 // --- Google OAuth ---
-router.get("/auth/google", passport.authenticate("google", { scope: ["profile", "email"] }));
+router.get("/auth/google", (req, res, next) => {
+  if (!GOOGLE_CLIENT_ID) {
+    return res.status(503).json({
+      error: "تسجيل الدخول عبر Google غير مُفعَّل حالياً",
+      details: "GOOGLE_CLIENT_ID غير مُعرَّف في إعدادات البيئة على Vercel.",
+    });
+  }
+  passport.authenticate("google", { scope: ["profile", "email"] })(req, res, next);
+});
 
 router.get(
   "/auth/google/callback",
-  passport.authenticate("google", { failureRedirect: "/login?error=google" }),
-  (req, res) => {
-    const user = req.user as any;
-    const dest = user?.isNew ? "/complete-profile" : "/";
-    res.redirect(dest);
+  (req, res, next) => {
+    passport.authenticate("google", (err: Error | null, user: any, info: any) => {
+      if (err) {
+        console.error("[auth/google/callback] خطأ في المصادقة:", err);
+        return res.redirect("/auth?error=google_internal");
+      }
+      if (!user) {
+        console.warn("[auth/google/callback] فشل المصادقة — info:", info);
+        return res.redirect("/auth?error=google_failed");
+      }
+      req.login(user, (loginErr) => {
+        if (loginErr) {
+          console.error("[auth/google/callback] فشل فتح الجلسة:", loginErr);
+          return res.redirect("/auth?error=session_failed");
+        }
+        const dest = user?.isNew ? "/complete-profile" : "/";
+        return res.redirect(dest);
+      });
+    })(req, res, next);
   },
 );
 
 // --- Telegram Login Widget ---
-// الواجهة الأمامية تستقبل بيانات الويدجت وترسلها هنا للتحقق وفتح الجلسة
 router.post("/auth/telegram", async (req, res) => {
   const payload = req.body as TelegramLoginPayload;
 
@@ -29,7 +51,11 @@ router.post("/auth/telegram", async (req, res) => {
   }
 
   const telegramId = String(payload.id);
-  const existing = await db.select().from(usersTable).where(eq(usersTable.telegramId, telegramId)).limit(1);
+  const existing = await db
+    .select()
+    .from(usersTable)
+    .where(eq(usersTable.telegramId, telegramId))
+    .limit(1);
 
   let user = existing[0];
   let isNew = false;
@@ -60,8 +86,15 @@ router.get("/auth/me", (req, res) => {
   res.json({ user: req.user });
 });
 
-router.post("/auth/logout", (req, res) => {
-  req.logout(() => res.json({ success: true }));
+router.post("/auth/logout", (req, res, next) => {
+  req.logout((err) => {
+    if (err) return next(err);
+    req.session.destroy((destroyErr) => {
+      if (destroyErr) return next(destroyErr);
+      res.clearCookie("connect.sid");
+      res.json({ success: true });
+    });
+  });
 });
 
 export default router;
