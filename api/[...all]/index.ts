@@ -1,17 +1,20 @@
 /* ============================================================
-   نقطة دخول Vercel الرسمية لـ Golog - catch-all
-   يتم إعادة توجيه كل طلب /api/* إليها من vercel.json
+   Vercel Catch-All Route — يلتقط ALL الطلبات تحت /api/*
+   ويمرّرها إلى خادم Express الأساسي.
+
+   هذه هي النقطة المفضلة لـ Vercel؛
+   ملف api/index.ts وحده لا يلتقط sub-paths من دون هذا الملف.
    ============================================================ */
 
 process.env.NODE_ENV = process.env.NODE_ENV || "production";
 
-// تحميل متغيرات البيئة محلياً فقط (على Vercel تكون جاهزة مسبقاً)
+// تحميل متغيرات البيئة محلياً فقط
 if (!process.env.VERCEL) {
   try {
     const fs = require("fs");
     const path = require("path");
     const dotenv = require("dotenv");
-    const envPath = path.resolve(__dirname, "..", "packages", "api-server", ".env");
+    const envPath = path.resolve(__dirname, "..", "..", "packages", "api-server", ".env");
     if (fs.existsSync(envPath)) {
       dotenv.config({ path: envPath });
     }
@@ -25,16 +28,16 @@ let cachedApp: any = null;
 async function getExpressApp() {
   if (cachedApp) return cachedApp;
   try {
-    const mod = await import("../packages/api-server/src/app");
+    const mod = await import("../../packages/api-server/src/app");
     cachedApp = mod.default || mod;
     return cachedApp;
   } catch (err) {
-    console.error("[vercel api] FAILED to load Express app:", err);
+    console.error("[vercel catch-all] FAILED to load Express app:", err);
     throw err;
   }
 }
 
-export default async function (req: any, res: any) {
+export default async function handler(req: any, res: any) {
   try {
     const app = await getExpressApp();
     if (!app || typeof app !== "function") {
@@ -43,10 +46,10 @@ export default async function (req: any, res: any) {
         appType: typeof app,
       });
     }
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       app(req, res, (err?: any) => {
         if (err) {
-          console.error("[vercel api] Express error:", err);
+          console.error("[vercel catch-all] Express error:", err);
           if (!res.headersSent) {
             res.status(500).json({
               error: "Internal server error",
@@ -58,7 +61,7 @@ export default async function (req: any, res: any) {
       });
     });
   } catch (e: any) {
-    console.error("[vercel api] FATAL:", e);
+    console.error("[vercel catch-all] FATAL:", e);
     return res.status(500).json({
       error: "API crashed",
       message: e?.message || String(e),
