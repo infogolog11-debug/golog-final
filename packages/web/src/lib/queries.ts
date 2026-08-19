@@ -37,8 +37,15 @@ export function useGetMe(options?: { retry?: boolean }) {
     queryKey: qk.me,
     queryFn: async () => {
       try {
-        const res = await api.get<{ user: User }>("/auth/me");
-        return res.user;
+        const data = await api.get<{ user: User | null | undefined }>("/auth/me");
+        // تحقق صارم: المستخدم يجب أن يملك id رقمي صحيح
+        // حتى لو رجع الباك-إند 200 OK لكن user هو {} أو undefined أو كائن بلا id
+        // (مثل مشكلة في serializeUser/deserializeUser) — نعتبره null
+        const candidate = data?.user;
+        if (candidate && typeof (candidate as any).id === "number") {
+          return candidate as User;
+        }
+        return null;
       } catch {
         return null;
       }

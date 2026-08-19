@@ -27,17 +27,51 @@ import { Spinner } from "@/components/ui/spinner";
 
 const queryClient = new QueryClient();
 
+const PROTECTED_ROUTES = [
+  "/passenger",
+  "/driver",
+  "/bookings",
+  "/messages",
+  "/profile",
+  "/admin",
+  "/notifications",
+  "/earnings",
+  "/points",
+  "/complete-profile",
+];
+
+function startsWithAny(path: string, prefixes: string[]) {
+  return prefixes.some((p) => path === p || path.startsWith(p + "/"));
+}
+
 function AppContent() {
-  const { data: user, isLoading } = useGetMe({ retry: false });
+  const { data: rawUser, isLoading } = useGetMe({ retry: false });
   const [location, setLocation] = useLocation();
 
+  const user =
+    rawUser && typeof (rawUser as any).id === "number" ? rawUser : null;
+  const isAuthenticated = Boolean(user);
+
   useEffect(() => {
-    if (!isLoading) {
-      if (user && (location === "/" || location === "/auth")) {
-        setLocation(user.currentRole === "driver" ? "/driver" : "/passenger");
+    if (isLoading) return;
+
+    if (isAuthenticated) {
+      if (location === "/" || location === "/auth") {
+        const target =
+          user && (user as any).currentRole === "driver"
+            ? "/driver"
+            : "/passenger";
+        setLocation(target);
+      }
+    } else {
+      const isProtected =
+        startsWithAny(location, PROTECTED_ROUTES) ||
+        startsWithAny(location, ["/messages/"]);
+      if (isProtected && location !== "/auth") {
+        setLocation("/auth");
       }
     }
-  }, [user, isLoading, location, setLocation]);
+  }, [isAuthenticated, isLoading, location, setLocation, user]);
 
   if (location === "/privacy") return <PrivacyPage />;
   if (location === "/terms") return <TermsPage />;
@@ -50,12 +84,9 @@ function AppContent() {
     );
   }
 
-  if (!user) {
+  if (!isAuthenticated) {
     if (location === "/auth" || location.startsWith("/auth")) {
       return <AuthPage />;
-    }
-    if (location === "/complete-profile") {
-      return <CompleteProfilePage />;
     }
     return <LandingPage />;
   }
@@ -66,7 +97,7 @@ function AppContent() {
 
   return (
     <div className="min-h-[100dvh] bg-background flex flex-col">
-      <Header user={user} />
+      <Header user={user!} />
       <ActiveTripBanner />
       <main className="flex-1 max-w-4xl w-full mx-auto p-4 md:p-6 lg:p-8 pb-24">
         <Switch>
@@ -83,7 +114,7 @@ function AppContent() {
           <Route component={NotFound} />
         </Switch>
       </main>
-      <BottomNav user={user} />
+      <BottomNav user={user!} />
     </div>
   );
 }
