@@ -15,6 +15,13 @@ function isBootstrapAdminEmail(email: string | undefined | null): boolean {
 }
 
 if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET) {
+  console.info(
+    "[passport] ✅ Google OAuth مفعّل.\n" +
+    "  → GOOGLE_CLIENT_ID    = " + GOOGLE_CLIENT_ID.slice(0, 8) + "...\n" +
+    "  → GOOGLE_CALLBACK_URL = " + GOOGLE_CALLBACK_URL + "\n" +
+    "  تأكد من أن نفس الرابط أعلاه مُضاف بدقّة في Google Cloud Console\n" +
+    "  (APIs & Services → Credentials → OAuth 2.0 Client IDs → Authorized redirect URIs)"
+  );
   passport.use(
     new GoogleStrategy(
       {

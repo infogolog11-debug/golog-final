@@ -23,17 +23,22 @@ router.get(
   (req, res, next) => {
     passport.authenticate("google", (err: Error | null, user: any, info: any) => {
       if (err) {
-        console.error("[auth/google/callback] خطأ في المصادقة:", err);
-        return res.redirect("/auth?error=google_internal");
+        console.error("[auth/google/callback] خطأ في المصادقة (err):", err);
+        console.error("[auth/google/callback] err.stack:", err?.stack);
+        const debug = encodeURIComponent(err?.message || String(err));
+        return res.redirect(`/auth?error=google_internal&debug=${debug}`);
       }
       if (!user) {
         console.warn("[auth/google/callback] فشل المصادقة — info:", info);
-        return res.redirect("/auth?error=google_failed");
+        const why = encodeURIComponent(info?.message || (typeof info === "string" ? info : "no-details"));
+        return res.redirect(`/auth?error=google_failed&info=${why}`);
       }
       req.login(user, (loginErr) => {
         if (loginErr) {
-          console.error("[auth/google/callback] فشل فتح الجلسة:", loginErr);
-          return res.redirect("/auth?error=session_failed");
+          console.error("[auth/google/callback] فشل فتح الجلسة (req.login):", loginErr);
+          console.error("[auth/google/callback] loginErr.stack:", loginErr?.stack);
+          const debug = encodeURIComponent(loginErr?.message || String(loginErr));
+          return res.redirect(`/auth?error=session_failed&debug=${debug}`);
         }
         const dest = user?.isNew ? "/complete-profile" : "/";
         return res.redirect(dest);

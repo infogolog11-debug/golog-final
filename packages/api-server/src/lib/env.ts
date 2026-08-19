@@ -42,6 +42,15 @@ export const PUBLIC_URL = (() => {
   return "http://localhost:8080";
 })();
 
+// اكتشاف بيئة الإنتاج بدقة أكبر: لا تعتمد فقط على NODE_ENV
+// (لأنه قد لا يكون مُعيّن وقت تشغيل الوظائف على Vercel رغم أن البناء يضبطه).
+// اعتبار أي نطاق HTTPS (مثل *.vercel.app أو دومين مخصص مع SSL) إنتاجاً.
+const _RAW_NODE_ENV = optional("NODE_ENV", "development");
+export const IS_PRODUCTION =
+  _RAW_NODE_ENV === "production" ||
+  PUBLIC_URL.startsWith("https://");
+export const NODE_ENV: "production" | "development" = IS_PRODUCTION ? "production" : "development";
+
 // أصول الواجهة المسموح لها بالوصول عبر CORS مع الكوكي
 export const WEB_ORIGINS = (() => {
   const explicit = process.env.WEB_ORIGIN;
@@ -121,5 +130,5 @@ export const TWILIO_FROM_NUMBER = optional("TWILIO_FROM_NUMBER");
 // 9. سجلات السيرفر
 // ============================================================
 export const LOG_LEVEL = optional("LOG_LEVEL", "info");
-export const NODE_ENV = optional("NODE_ENV", "development");
-export const IS_PRODUCTION = NODE_ENV === "production";
+// ملاحظة: NODE_ENV و IS_PRODUCTION مُعرَّفان في الأعلى (بعد PUBLIC_URL مباشرة)
+// مع اكتشاف أذكى يعتمد على PUBLIC_URL أيضاً.

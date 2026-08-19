@@ -29,6 +29,9 @@
     }
   ],
   "rewrites": [
-    { "source": "/((?!assets|static|favicon\\.ico|opengraph\\.jpg|robots\\.txt|api).*)", "destination": "/index.html" }
+    {
+      "source": "/((?!api$|api/|assets/|static/|favicon\\.ico|opengraph\\.jpg|robots\\.txt).*)",
+      "destination": "/index.html"
+    }
   ]
 }
