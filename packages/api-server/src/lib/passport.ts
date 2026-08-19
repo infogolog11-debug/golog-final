@@ -73,7 +73,7 @@ if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET) {
 
 passport.serializeUser((user: any, done) => {
   done(null, user.id);
-};
+});
 
 passport.deserializeUser(async (id: number, done) => {
   try {
