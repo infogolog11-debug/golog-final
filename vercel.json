@@ -1,0 +1,17 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "installCommand": "npm install",
+  "buildCommand": "npm run build && node -e \"const fs=require('fs');if(!fs.existsSync('packages/api-server/public/api')){fs.mkdirSync('packages/api-server/public/api',{recursive:true})}\"",
+  "outputDirectory": "packages/api-server/public",
+  "functions": {
+    "api/index.ts": {
+      "includeFiles": "packages/api-server/src/**,packages/db/src/**,node_modules/**"
+    }
+  },
+  "cleanUrls": true,
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/index.ts" },
+    { "source": "/((?!assets|static|favicon\\.ico|robots\\.txt|api).*)", "destination": "/index.html" }
+  ]
+}

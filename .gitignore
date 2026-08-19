@@ -1,0 +1,16 @@
+node_modules/
+.npm/
+.cache/
+dist/
+build/
+.env
+.env.local
+.env.*.local
+.vercel/
+*.log
+deploy.bat
+sync-git.bat
+push-git.bat
+install_log.txt
+.DS_Store
+Golog-Travel/

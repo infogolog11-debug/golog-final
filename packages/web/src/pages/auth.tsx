@@ -1,0 +1,113 @@
+import { useEffect, useRef, useState } from "react";
+import { useLocation, useSearch } from "wouter";
+import { useTelegramLogin } from "@/lib/queries";
+import { Button } from "@/components/ui/button";
+import { googleLoginUrl } from "@/lib/api";
+import { RouteLine } from "@/components/route-line";
+
+// لا يوجد أي بريد إلكتروني أو كلمة سر هنا إطلاقاً — الدخول حصراً عبر
+// Google أو Telegram Login Widget، تماشياً مع مبدأ عدم وجود كلمات سر يديرها التطبيق.
+
+function GoogleIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+      <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4" />
+      <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
+      <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05" />
+      <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335" />
+    </svg>
+  );
+}
+
+declare global {
+  interface Window {
+    onTelegramAuth?: (user: Record<string, unknown>) => void;
+  }
+}
+
+export default function AuthPage() {
+  const [errorMsg, setErrorMsg] = useState("");
+  const [, setLocation] = useLocation();
+  const search = useSearch();
+  const telegramLogin = useTelegramLogin();
+  const telegramRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams(search);
+    const err = params.get("error");
+    if (err === "google") setErrorMsg("فشل تسجيل الدخول عبر Google. حاول مجدداً.");
+  }, [search]);
+
+  useEffect(() => {
+    window.onTelegramAuth = (tgUser) => {
+      setErrorMsg("");
+      telegramLogin.mutate(tgUser, {
+        onSuccess: (res) => setLocation(res.user.gender && res.user.ageConfirmedAt ? "/" : "/complete-profile"),
+        onError: () => setErrorMsg("فشل تسجيل الدخول عبر Telegram. حاول مجدداً."),
+      });
+    };
+
+    const container = telegramRef.current;
+    if (!container) return;
+    container.innerHTML = "";
+
+    const script = document.createElement("script");
+    script.src = "https://telegram.org/js/telegram-widget.js?22";
+    script.setAttribute("data-telegram-login", import.meta.env.VITE_TELEGRAM_BOT_USERNAME || "GologApp_bot");
+    script.setAttribute("data-size", "large");
+    script.setAttribute("data-onauth", "onTelegramAuth(user)");
+    script.setAttribute("data-request-access", "write");
+    script.async = true;
+    container.appendChild(script);
+
+    return () => {
+      window.onTelegramAuth = undefined;
+    };
+  }, []);
+
+  function handleGoogleLogin() {
+    window.location.href = googleLoginUrl();
+  }
+
+  return (
+    <div className="min-h-[100dvh] w-full flex items-center justify-center bg-background p-4" dir="rtl">
+      <div className="w-full max-w-md space-y-8">
+        <div className="text-center space-y-3">
+          <h1 className="font-display text-5xl font-bold tracking-tight text-primary">Golog</h1>
+          <div className="flex items-center justify-center gap-3 text-sm text-muted-foreground">
+            <span>حلب</span>
+            <RouteLine animated />
+            <span>غازي عنتاب</span>
+          </div>
+          <p className="text-muted-foreground pt-1">رفقة موثوقة على الطريق بين مدنك</p>
+        </div>
+
+        {errorMsg && (
+          <div className="bg-destructive/10 text-destructive text-sm rounded-lg px-4 py-3 text-center">{errorMsg}</div>
+        )}
+
+        <div className="space-y-4 bg-card border border-card-border rounded-2xl p-6 shadow-sm">
+          <Button variant="outline" className="w-full gap-3 h-11 text-base font-medium border-2" onClick={handleGoogleLogin}>
+            <GoogleIcon />
+            تسجيل الدخول عبر Google
+          </Button>
+
+          <div className="relative">
+            <div className="absolute inset-0 flex items-center">
+              <span className="w-full border-t" />
+            </div>
+            <div className="relative flex justify-center text-xs uppercase">
+              <span className="bg-card px-3 text-muted-foreground">أو</span>
+            </div>
+          </div>
+
+          <div className="flex justify-center" ref={telegramRef} />
+        </div>
+
+        <p className="text-center text-xs text-muted-foreground">
+          لا حاجة لكلمة سر — دخولك محمي بالكامل عبر حسابك في Google أو Telegram
+        </p>
+      </div>
+    </div>
+  );
+}
