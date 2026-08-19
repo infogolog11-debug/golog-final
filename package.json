@@ -7,7 +7,7 @@
   ],
   "scripts": {
     "build:web": "npm run build --workspace=@golog/web",
-    "build:copy-web": "node -e \"const fs=require('fs');const p=require('path');const s=p.resolve('packages/web/dist');const d=p.resolve('packages/api-server/public');fs.rmSync(d,{recursive:true,force:true});fs.cpSync(s,d,{recursive:true});\"",
+    "build:copy-web": "node -e \"const fs=require('fs');const p=require('path');const s=p.resolve('packages/web/dist');const d=p.resolve('public');fs.rmSync(d,{recursive:true,force:true});fs.cpSync(s,d,{recursive:true});\"",
     "build:api": "npm run typecheck --workspace=@golog/api-server",
     "build": "npm run build:web && npm run build:copy-web && npm run build:api",
     "vercel-build": "node scripts/vercel-build.js",

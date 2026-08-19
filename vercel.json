@@ -3,7 +3,6 @@
   "framework": null,
   "installCommand": "npm install",
   "buildCommand": "npm run vercel-build",
-  "outputDirectory": "packages/api-server/public",
   "functions": {
     "api/index.ts": { "maxDuration": 30 },
     "api/[...all]/index.ts": { "maxDuration": 30 }
@@ -28,7 +27,6 @@
   ],
   "rewrites": [
     { "source": "/api", "destination": "/api/index.ts" },
-    { "source": "/api/:path((?!$).*)", "destination": "/api/[...all]/index.ts" },
-    { "source": "/((?!assets|static|favicon\\.ico|opengraph\\.jpg|robots\\.txt).*)", "destination": "/index.html" }
+    { "source": "/api/:path((?!$).*)", "destination": "/api/[...all]/index.ts" }
   ]
 }

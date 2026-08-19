@@ -1,35 +1,35 @@
 /* ============================================================
-   سكربت البناء الموحّد لمشروع Golog على Vercel
+   سكربت البناء الموحّد لمشروع Golog على Vercel (الإصدار الجديد - الأكثر استقراراً)
    يقوم بـ:
    1. تثبيت تبعيات workspace إن لم تكن مثبّتة
    2. بناء الواجهة الأمامية (Vite) داخل packages/web
-   3. نسخ مخرجات البناء إلى packages/api-server/public
+   3. نسخ مخرجات البناء إلى مجلد /public في الجذر (مجلد Vercel الافتراضي)
    4. فحص أنواع TypeScript لـ API Server
    ============================================================ */
 
-const { execSync, spawnSync } = require("child_process");
+const { spawnSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 
 const ROOT = path.resolve(__dirname, "..");
 const WEB_DIR = path.join(ROOT, "packages", "web");
 const WEB_DIST = path.join(WEB_DIR, "dist");
-const API_PUBLIC = path.join(ROOT, "packages", "api-server", "public");
+const ROOT_PUBLIC = path.join(ROOT, "public"); // ← مجلد Vercel الافتراضي
 
 function log(msg) {
-  console.log(`\n[vercel-build] ${msg}\n`);
+  console.log("\n[vercel-build] " + msg + "\n");
 }
 
 function run(cmd, cwd) {
-  log(`تشغيل: ${cmd}`);
+  log("Running: " + cmd);
   const result = spawnSync(cmd, {
     shell: true,
     cwd: cwd || ROOT,
     stdio: "inherit",
-    env: { ...process.env, CI: "true" },
+    env: Object.assign({}, process.env, { CI: "true" }),
   });
   if (result.status !== 0) {
-    console.error(`❌ فشل الأمر: ${cmd}`);
+    console.error("[vercel-build] FAILED command: " + cmd);
     process.exit(result.status || 1);
   }
 }
@@ -61,18 +61,18 @@ function cleanDir(dir) {
 }
 
 async function main() {
-  log("بدء سكربت البناء الموحّد لـ Golog");
-  console.log(`ROOT = ${ROOT}`);
+  log("Golog unified build script starting...");
+  console.log("ROOT = " + ROOT);
 
   // ------------------------------------------------------------
   // الخطوة 0: التأكد من تثبيت تبعيات الجذر (workspace)
   // ------------------------------------------------------------
   const ROOT_NODE_MODULES = path.join(ROOT, "node_modules");
   if (!fs.existsSync(ROOT_NODE_MODULES)) {
-    log("تثبيت تبعيات Workspace من الجذر...");
+    log("Installing workspace dependencies from root...");
     run("npm install", ROOT);
   } else {
-    log("تبعيات Workspace موجودة بالفعل");
+    log("Workspace dependencies already installed");
   }
 
   // ------------------------------------------------------------
@@ -80,28 +80,29 @@ async function main() {
   // ------------------------------------------------------------
   const WEB_NODE_MODULES = path.join(WEB_DIR, "node_modules");
   if (!fs.existsSync(WEB_NODE_MODULES)) {
-    log("تثبيت تبعيات الواجهة الأمامية (packages/web)...");
+    log("Installing frontend dependencies (packages/web)...");
     run("npm install", WEB_DIR);
   }
 
-  log("بناء الواجهة الأمامية (Vite build)...");
+  log("Building frontend (vite build)...");
   run("npm run build", WEB_DIR);
 
   if (!fs.existsSync(WEB_DIST)) {
-    console.error("❌ فشل بناء الواجهة الأمامية — مجلد dist غير موجود!");
+    console.error("[vercel-build] FATAL: frontend dist folder is missing after build!");
     process.exit(1);
   }
-  log("تم بناء الواجهة بنجاح ✓");
+  log("Frontend built successfully ✓");
 
   // ------------------------------------------------------------
-  // الخطوة 2: نسخ مخرجات الواجهة إلى مجلد public في API Server
+  // الخطوة 2: نسخ مخرجات الواجهة إلى مجلد /public في الجذر
+  // (مجلد Vercel الافتراضي لخدمة الملفات الثابتة)
   // ------------------------------------------------------------
-  log(`حذف المجلد القديم: ${API_PUBLIC}`);
-  cleanDir(API_PUBLIC);
+  log("Cleaning old /public folder at root: " + ROOT_PUBLIC);
+  cleanDir(ROOT_PUBLIC);
 
-  log(`نسخ مخرجات الواجهة من ${WEB_DIST} إلى ${API_PUBLIC}`);
-  copyDir(WEB_DIST, API_PUBLIC);
-  log("تم نسخ الواجهة بنجاح ✓");
+  log("Copying frontend dist from " + WEB_DIST + " → " + ROOT_PUBLIC);
+  copyDir(WEB_DIST, ROOT_PUBLIC);
+  log("Frontend copied successfully ✓");
 
   // ------------------------------------------------------------
   // الخطوة 3: فحص أنواع TypeScript لـ API Server
@@ -109,18 +110,18 @@ async function main() {
   const API_DIR = path.join(ROOT, "packages", "api-server");
   const API_NODE_MODULES = path.join(API_DIR, "node_modules");
   if (!fs.existsSync(API_NODE_MODULES)) {
-    log("تثبيت تبعيات API Server...");
+    log("Installing API Server dependencies...");
     run("npm install", API_DIR);
   }
 
-  log("فحص أنواع TypeScript لـ API Server...");
+  log("Type-checking API Server TypeScript...");
   run("npm run typecheck", API_DIR);
-  log("تم فحص الأنواع بنجاح ✓");
+  log("TypeScript checks passed ✓");
 
-  log("\n🎉 انتهى البناء بنجاح — المشروع جاهز للنشر على Vercel!");
+  log("\n🎉 Build complete — project is ready for Vercel deployment!\n");
 }
 
-main().catch((err) => {
-  console.error("❌ فشل سكربت البناء:", err);
+main().catch(function (err) {
+  console.error("[vercel-build] Build script FATAL error:", err);
   process.exit(1);
 });
