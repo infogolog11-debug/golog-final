@@ -1,9 +1,7 @@
 /* ============================================================
-   Vercel Catch-All Route — يلتقط ALL الطلبات تحت /api/*
-   ويمرّرها إلى خادم Express الأساسي.
-
-   هذه هي النقطة المفضلة لـ Vercel؛
-   ملف api/index.ts وحده لا يلتقط sub-paths من دون هذا الملف.
+   Vercel Catch-All Route (ROOT LEVEL — الأكثر توافقاً على الإطلاق!)
+   هذا الملف وحده يكفي لالتقاط كل مسارات /api/* تلقائياً بدون الحاجة
+   إلى أي rewrites مخصّصة في vercel.json.
    ============================================================ */
 
 process.env.NODE_ENV = process.env.NODE_ENV || "production";
@@ -14,7 +12,7 @@ if (!process.env.VERCEL) {
     const fs = require("fs");
     const path = require("path");
     const dotenv = require("dotenv");
-    const envPath = path.resolve(__dirname, "..", "..", "packages", "api-server", ".env");
+    const envPath = path.resolve(__dirname, "..", "packages", "api-server", ".env");
     if (fs.existsSync(envPath)) {
       dotenv.config({ path: envPath });
     }
@@ -23,12 +21,11 @@ if (!process.env.VERCEL) {
   }
 }
 
-let cachedApp: any = null;
-
+let cachedApp = null;
 async function getExpressApp() {
   if (cachedApp) return cachedApp;
   try {
-    const mod = await import("../../packages/api-server/src/app");
+    const mod = await import("../packages/api-server/src/app");
     cachedApp = mod.default || mod;
     return cachedApp;
   } catch (err) {
@@ -37,7 +34,7 @@ async function getExpressApp() {
   }
 }
 
-export default async function handler(req: any, res: any) {
+export default async function handler(req, res) {
   try {
     const app = await getExpressApp();
     if (!app || typeof app !== "function") {
@@ -47,25 +44,26 @@ export default async function handler(req: any, res: any) {
       });
     }
     return new Promise((resolve) => {
-      app(req, res, (err?: any) => {
+      app(req, res, (err) => {
         if (err) {
           console.error("[vercel catch-all] Express error:", err);
           if (!res.headersSent) {
             res.status(500).json({
               error: "Internal server error",
-              message: err?.message || String(err),
+              message: err && err.message ? err.message : String(err),
             });
           }
         }
         resolve(undefined);
       });
     });
-  } catch (e: any) {
+  } catch (e) {
     console.error("[vercel catch-all] FATAL:", e);
+    const message = e && e.message ? e.message : String(e);
     return res.status(500).json({
       error: "API crashed",
-      message: e?.message || String(e),
-      stack: process.env.NODE_ENV === "production" ? undefined : e?.stack,
+      message,
+      stack: process.env.NODE_ENV === "production" ? undefined : (e && e.stack ? e.stack : undefined),
     });
   }
 }
