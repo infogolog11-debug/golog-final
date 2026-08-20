@@ -23,9 +23,8 @@
     }
   ],
   "rewrites": [
-    {
-      "source": "/((?!_next/|_static/|_vercel|[\\w-]+\\.[\\w-]+).*)",
-      "destination": "/index.html"
-    }
+    { "source": "/api",          "destination": "/api/index.ts" },
+    { "source": "/api/:match*",  "destination": "/api/index.ts" },
+    { "source": "/((?!api/|_next/|_static/|_vercel|[\\w-]+\\.[\\w-]+).*)", "destination": "/index.html" }
   ]
 }
