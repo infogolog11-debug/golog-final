@@ -140,11 +140,18 @@ function findStaticDir(): string | null {
     path.join(process.cwd(), "..", "public"),
     path.resolve(__dirname, "..", "..", "public"),
     path.resolve(__dirname, "..", "public"),
+    // Fallback إضافي: حتى لو فشل نسخ dist إلى public/
+    // → استخدم مجلد packages/web/dist مباشرة.
+    path.join(process.cwd(), "packages", "web", "dist"),
+    path.join(process.cwd(), "..", "packages", "web", "dist"),
+    path.resolve(__dirname, "..", "..", "packages", "web", "dist"),
   ];
   for (const p of candidates) {
     try {
       if (fs.existsSync(p) && fs.statSync(p).isDirectory()) {
-        return p;
+        // تأكد أن index.html موجود فعلاً في هذا المجلد
+        const idx = path.join(p, "index.html");
+        if (fs.existsSync(idx)) return p;
       }
     } catch {
       // ignore

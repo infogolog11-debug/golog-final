@@ -97,54 +97,11 @@ async function main() {
   }
 
   // ------------------------------------------------------------
-  // الخطوة 0.5 (جديدة): مطابقة الجداول في قاعدة البيانات (drizzle-kit push)
+  // الخطوة 0.5: تخطي drizzle-kit push (لم نعد نحتاجه!)
+  // تم استبداله بنقطة /api/debug/db-sync عبر SQL RAW مباشرة
+  // التي تعمل أسرع بكثير ولا تعتمد على npx أو مجلدات داخلية
   // ------------------------------------------------------------
-  // ينشئ كل الجداول المطلوبة (users, trips, bookings, ...) تلقائياً
-  // إذا كان DATABASE_URL متاحاً. الخطوة غير قاتلة (non-fatal) حتى لا
-  // ينهار النشر إذا كان المستخدم قد لم يضف متغير البيئة بعد في Vercel.
-  const DB_DIR = path.join(ROOT, "packages", "db");
-  const DB_NODE_MODULES = path.join(DB_DIR, "node_modules");
-  if (!fs.existsSync(DB_NODE_MODULES)) {
-    log("Installing DB package dependencies (packages/db)...");
-    run("npm install", DB_DIR);
-  }
-
-  if (process.env.DATABASE_URL) {
-    log("DATABASE_URL found! Running drizzle-kit push to sync DB schema...");
-    log("------------------------------------------------------------");
-    log("⚠️  إذا فشلت هذه الخطوة فلن تُنشئ جداول المستخدمين والرحلات،");
-    log("   وسيظهر خطأ google_internal عند محاولة تسجيل الدخول.");
-    log("   بعد النشر تستطيع تشغيلها يدوياً عبر:");
-    log("   curl \"" + (process.env.PUBLIC_URL || "https://<your-project>.vercel.app") + "/api/debug/db-sync?secret=<DB_SYNC_SECRET>\"");
-    log("------------------------------------------------------------");
-    const ok = runSoft("npx drizzle-kit push --config ./drizzle.config.ts", DB_DIR);
-    if (ok) {
-      log("✅ DB schema synced successfully with database");
-    } else {
-      const hr = "\n" + "=".repeat(68);
-      console.error(hr);
-      console.error("🔴  🔴  🔴   drizzle-kit push FAILED — قاعدة البيانات LIKELY NOT CREATED!   🔴  🔴  🔴");
-      console.error(hr);
-      console.error(" الأسباب الأكثر شيوعاً:");
-      console.error("  1. DATABASE_URL غير صحيح أو المستخدم لا يملك صلاحيات CREATE TABLE");
-      console.error("  2. SSL mode يتطلب تعطيله أو تفعيله — جرّب إضافة DB_DISABLE_SSL=true");
-      console.error("  3. المزود (Supabase/Neon/Railway) يطلب إضافة IP لقائمة Whitelist");
-      console.error();
-      console.error(" الإصلاح السريع بعد النشر:");
-      console.error("  1. أضف DB_SYNC_SECRET في Vercel Environment Variables");
-      console.error("  2. أعد النشر (Redeploy)");
-      console.error("  3. افتح في المتصفح:");
-      console.error("     /api/debug/db-sync?secret=<قيمة_DB_SYNC_SECRET_التي_أضفتها>");
-      console.error(hr + "\n");
-    }
-  } else {
-    const hr = "\n" + "=".repeat(68);
-    console.warn(hr);
-    console.warn("🟡  DATABASE_URL غير متوفر — تخطي إنشاء جداول قاعدة البيانات!");
-    console.warn("    لن تعمل أي ميزة (تسجيل دخول، رحلات، حجوزات) حتى تضيفه.");
-    console.warn("    أضفه من Vercel → Project Settings → Environment Variables، ثم أعد النشر.");
-    console.warn(hr + "\n");
-  }
+  log("Skipping drizzle-kit push — we now use SQL RAW /api/debug/db-sync endpoint");
 
   // ------------------------------------------------------------
   // الخطوة 1: تثبيت تبعيات الواجهة الأمامية وإنشائها
