@@ -116,17 +116,76 @@ async function main() {
   run("npm install --no-audit --no-fund --prefer-offline 2>&1 | tail -80", WEB_DIR);
 
   log("Building frontend (vite build)...");
-  // الإجبار على طباعة آخر 120 سطر في الـ stdout/stderr لـ vite
-  // حتى نرى أخطاء TypeScript مباشرة في Vercel Build Logs بدلاً
-  // من الـ "success" الكاذب.
-  const VITE_BUILD_CMD =
-    "npm run build 2>&1" +
-    " | tee /tmp/golog-vite-build.log" +
-    " | tail -120 ; " +
-    "EXIT=${PIPESTATUS[0]} ; " +
-    "if [ ${EXIT} -ne 0 ]; then echo; echo \"=================== VITE BUILD FAILED (last 120 lines above) ===================\" ; fi ; " +
-    "exit ${EXIT}";
-  run(VITE_BUILD_CMD, WEB_DIR);
+  // الإصلاح الحاسم 1 لـ vite build:
+  // نحاول بناء الواجهة مع طبقات متتالية مع إرجاع exit code صريح.
+  // الفشل هنا سينهي الـ Build مباشرةً بـ process.exit(1) قبل مسح public/.
+  // ====================== الطبقة 1 ======================
+  let viteOk = false;
+  let viteErrorLines = "";
+  try {
+    // أولاً: محاولة مباشرة لـ npm run build داخل packages/web
+    const directBuild = spawnSync("npm run build 2>&1", {
+      shell: true,
+      cwd: WEB_DIR,
+      stdio: "pipe",
+      env: Object.assign({}, process.env, { CI: "true" }),
+    });
+    viteOk = directBuild.status === 0;
+    const combined = (directBuild.stdout ? String(directBuild.stdout || "") : "") + (directBuild.stderr ? String(directBuild.stderr || "") : "");
+    viteErrorLines = combined.split("\n").slice(-120).join("\n");
+  } catch (e) {
+    viteOk = false;
+    viteErrorLines = "Exception during spawn: " + (e && e.message ? e.message : String(e));
+  }
+  // ====================== طبقة 2 ======================
+  // إذا فشل الطبقة الأولى: نحاول استدعاء vite مباشرة من node_modules/.bin
+  if (!viteOk) {
+    const viteBin = path.join(WEB_DIR, "node_modules", ".bin", "vite");
+    const viteBinCmd = (process.platform === "win32" ? viteBin + ".cmd" : viteBin);
+    const alt = spawnSync(`"${viteBinCmd}" build 2>&1`, {
+      shell: true,
+      cwd: WEB_DIR,
+      stdio: "pipe",
+      env: Object.assign({}, process.env, { CI: "true" }),
+    });
+    viteOk = alt.status === 0;
+    const combined = (alt.stdout ? String(alt.stdout || "") : "") + (alt.stderr ? String(alt.stderr || "") : "");
+    viteErrorLines = combined.split("\n").slice(-120).join("\n");
+  }
+  // ====================== طبقة 3 ======================
+  // إذا فشلت الطبقتان: ربما هو أن npm run build في packages/web
+  // نفسه غير معرف في package.json web → نحاول تشغيل vite من الجذر عبر workspace
+  if (!viteOk) {
+    const rootAlt = spawnSync("npm run build:web 2>&1", {
+      shell: true,
+      cwd: ROOT,
+      stdio: "pipe",
+      env: Object.assign({}, process.env, { CI: "true" }),
+    });
+    viteOk = rootAlt.status === 0;
+    const combined = (rootAlt.stdout ? String(rootAlt.stdout || "") : "") + (rootAlt.stderr ? String(rootAlt.stderr || "") : "");
+    viteErrorLines = combined.split("\n").slice(-120).join("\n");
+  }
+
+  // ============ FATAL EXIT 1 إذا فشل vite build بأي طريقة ============
+  if (!viteOk) {
+    const hr = "\n" + "=".repeat(80);
+    console.error(hr);
+    console.error("🔴  FATAL: Vite build FAILED (all 3 layers failed for packages/web!");
+    console.error("   → الأسباب الأكثر شيوعاً:");
+    console.error("   1) أخطاء TypeScript في مكونات React (App.tsx, pages/*)");
+    console.error("   2) أخطاء استيراد ملفات (اسم ملف خطأ)");
+    console.error("   3) تبعيات packages/web لم يتم تثبيتها");
+    console.error(hr);
+    console.error("   آخر 120 سطر من مخرجات Vite build:");
+    console.error(hr);
+    console.error(viteErrorLines || "(empty output)");
+    console.error(hr);
+    // IMPORTANT: لا نمسح public/ أبداً إذا فشل vite build — احتفظ بالـ physical index.html الموجود في المستودع (الذي وضعناه يدوياً كـ fallback)
+    process.exit(1);
+  }
+
+  log("✅ Vite build succeeded! (all checks passed ✓");
 
   if (!fs.existsSync(WEB_DIST)) {
     console.error("[vercel-build] FATAL: frontend dist folder is missing after build!");

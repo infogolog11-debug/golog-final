@@ -140,18 +140,25 @@ function findStaticDir(): string | null {
     path.join(process.cwd(), "..", "public"),
     path.resolve(__dirname, "..", "..", "public"),
     path.resolve(__dirname, "..", "public"),
+    path.resolve(__dirname, "..", "..", "..", "public"),
     // Fallback إضافي: حتى لو فشل نسخ dist إلى public/
     // → استخدم مجلد packages/web/dist مباشرة.
     path.join(process.cwd(), "packages", "web", "dist"),
     path.join(process.cwd(), "..", "packages", "web", "dist"),
     path.resolve(__dirname, "..", "..", "packages", "web", "dist"),
+    path.resolve(__dirname, "..", "..", "..", "packages", "web", "dist"),
+    // Fallback أخير: مجلدات بالنسبة لوظائف Vercel من مجلد api/function
+    "/tmp/public",
+    "/var/task/public",
+    "/var/task/packages/web/dist",
   ];
   for (const p of candidates) {
     try {
       if (fs.existsSync(p) && fs.statSync(p).isDirectory()) {
-        // تأكد أن index.html موجود فعلاً في هذا المجلد
         const idx = path.join(p, "index.html");
-        if (fs.existsSync(idx)) return p;
+        if (fs.existsSync(idx)) {
+          return p;
+        }
       }
     } catch {
       // ignore
@@ -161,32 +168,44 @@ function findStaticDir(): string | null {
 }
 
 const staticDir = findStaticDir();
+// نحفظ المسار المستخدم للـ logs وفي Runtime لتشخيص الـ fallback endpoint
+const FOUND_STATIC_DIR = staticDir;
 
 if (staticDir) {
   logger.info("serving frontend static files from: " + staticDir);
-  // خدمة الملفات الثابتة (assets, images, js, css, ...)
   app.use(express.static(staticDir, {
     maxAge: IS_PRODUCTION ? "1y" : 0,
-    index: false, // لا تعرض index.html افتراضياً؛ نريد التحكم بالمسار بأنفسنا
+    index: false,
+    // Fallback لـ index.html إذا تم طلبه مباشرة
+    fallthrough: true,
   }));
 
-  // ============================================================
-  // SPA Fallback قوي: أي GET طلب (باستثناء /api/* وملفات
-  // ذات امتداد ثابت معروف) → نعيد index.html
-  // حتى لو فشلت قواعد rewrites في vercel.json، يضمن هذا
-  // أن المستخدم لن يرى 404 أبداً.
-  // ============================================================
   const KNOWN_EXT_RE = /\.(?:js|mjs|cjs|css|map|png|jpe?g|gif|webp|avif|svg|ico|woff2?|ttf|otf|eot|json|txt|xml|webmanifest)$/i;
 
   app.get("*", (req, res, next) => {
-    // تجاهل أي مسار يبدأ بـ /api (يتعامل معه الـ router أعلاه)
     if (req.path.startsWith("/api")) return next();
-    // تجاهل أي مسار يحتوي على امتداد ملف ثابت معروف
     if (KNOWN_EXT_RE.test(req.path)) return next();
-    // كل شيء آخر → صفحة React الرئيسية (Wouter سيعالج المسار)
-    const indexHtml = path.join(staticDir, "index.html");
+    // نحاول إيجاد index.html في مجلد staticDir الرئيسي أولاً
+    let indexHtml = path.join(staticDir, "index.html");
+    // Fallback ثانوي: إذا لم يكن موجوداً هناك → جرب كل المسارات المرشحة حتى تجد أي index.html مادي
+    if (!fs.existsSync(indexHtml)) {
+      const extras = [
+        path.join(process.cwd(), "public", "index.html"),
+        path.resolve(__dirname, "..", "..", "public", "index.html"),
+        path.join(process.cwd(), "packages", "web", "dist", "index.html"),
+        path.resolve(__dirname, "..", "..", "packages", "web", "dist", "index.html"),
+      ];
+      for (const p of extras) {
+        if (fs.existsSync(p)) { indexHtml = p; break; }
+      }
+    }
     if (!fs.existsSync(indexHtml)) return next();
-    res.sendFile(indexHtml);
+    res.sendFile(indexHtml, (err) => {
+      if (err) {
+        logger.warn("sendFile failed for SPA: " + (err && err.message ? err.message : String(err)));
+        next(err);
+      }
+    });
   });
 } else {
   logger.warn(
@@ -194,16 +213,43 @@ if (staticDir) {
     "لن تتم خدمة الصفحات (SPA fallback معطّل). " +
     "تأكد من نجاح مرحلة البناء (build) ووجود مجلد /public في جذر المشروع."
   );
-  // Fallback طارئ حتى لو لم يكن هناك public: نرسل صفحة بسيطة
-  // تخبر المستخدم أن البناء قد فشل أو لم يكتمل بعد.
+  // Fallback طارئ أقوى: نحاول إيجاد index.html مادي في أي مكان ممكن
+  // وليس مجرد صفحة refresh
   app.get("*", (req, res, next) => {
     if (req.path.startsWith("/api")) return next();
+    const KNOWN_EXT_RE_FALLBACK = /\.(?:js|mjs|cjs|css|map|png|jpe?g|gif|webp|avif|svg|ico|woff2?|ttf|otf|eot|json|txt|xml|webmanifest)$/i;
+    if (KNOWN_EXT_RE_FALLBACK.test(req.path)) return next();
+    // جرب كل مسارات index.html الممكنة مادياً
+    const possibleIndices = [
+      path.join(process.cwd(), "public", "index.html"),
+      path.join(process.cwd(), "..", "public", "index.html"),
+      path.resolve(__dirname, "..", "..", "public", "index.html"),
+      path.resolve(__dirname, "..", "public", "index.html"),
+      path.join(process.cwd(), "packages", "web", "dist", "index.html"),
+      path.resolve(__dirname, "..", "..", "packages", "web", "dist", "index.html"),
+    ];
+    for (const idx of possibleIndices) {
+      try {
+        if (fs.existsSync(idx)) {
+          return res.sendFile(idx, (e) => {
+            if (e) next();
+          });
+        }
+      } catch { /* ignore */ }
+    }
+    // آخر fallback: صفحة HTML بسيطة تشرح للمستخدم المشكلة
     res.type("html").send(
       "<!doctype html>" +
-      "<html><head><meta charset='utf-8'><meta http-equiv='refresh' content='3'></head>" +
-      "<body style='font-family:system-ui;max-width:60ch;margin:4rem auto;padding:1rem'>" +
+      "<html lang='ar' dir='rtl'><head><meta charset='utf-8'><title>Golog — جاري التهيئة</title>" +
+      "<meta http-equiv='refresh' content='5'></head>" +
+      "<body style='font-family:system-ui;max-width:60ch;margin:4rem auto;padding:1rem;background:#fffaf2;color:#1f2937'>" +
+      "<h1 style='color:#f59e0b;font-family:Reem Kufi,sans-serif'>Golog</h1>" +
       "<h2>جاري تحميل التطبيق...</h2>" +
-      "<p>إذا رأيت هذه الرسالة لأكثر من ثوانٍ، فهذا يعني أن عملية البناء لم تكتمل بعد.</p>" +
+      "<p style='opacity:.8'>إذا رأيت هذه الرسالة لأكثر من 10 ثوانٍ فهذا يعني أن عملية البناء على Vercel لم تنسخ ملفات الواجهة بعد.</p>" +
+      "<p>الخطوات المقترحة:</p>" +
+      "<ol><li>انتظر 30 ثانية ثم اضغط تحديث (F5)</li>" +
+      "<li>إذا لم ينجح: افتح صفحة تسجيل الدخول مباشرةً: <a href='/auth'>/auth</a></li>" +
+      "<li>إذا ظهر 404 مجدداً: قم بـ Redeploy من صفحة Vercel Deployments</li></ol>" +
       "</body></html>"
     );
   });

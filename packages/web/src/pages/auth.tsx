@@ -89,13 +89,43 @@ export default function AuthPage() {
     if (!container) return;
     container.innerHTML = "";
 
+    // ========== إصلاح خطأ "Bot domain invalid" ==========
+    // قبل تحميل Telegram Login Widget: نعرض للمستخدم تعليمات صريحة لكيفية
+    // إعداد الدومين في BotFather (لأن هذا هو السبب الحقيقي الوحيد لظهور هذا الخطأ).
+    const currentDomain = (window.location.protocol + "//" + window.location.host).replace(/\/$/, "");
+    const botUsername = (import.meta.env.VITE_TELEGRAM_BOT_USERNAME || "GologApp_bot");
+    const tipDiv = document.createElement("div");
+    tipDiv.className = "mb-3 p-3 rounded-lg border border-amber-500/40 bg-amber-500/10 text-[11px] text-amber-900 dark:text-amber-200 whitespace-pre-wrap";
+    tipDiv.textContent =
+      "💡 لإخفاء رسالة 'Bot domain invalid' في زر Telegram:\nافتح @BotFather ثم أرسل: /setdomain " + window.location.hostname;
+    container.appendChild(tipDiv);
+
     const script = document.createElement("script");
     script.src = "https://telegram.org/js/telegram-widget.js?22";
-    script.setAttribute("data-telegram-login", import.meta.env.VITE_TELEGRAM_BOT_USERNAME || "GologApp_bot");
+    script.setAttribute("data-telegram-login", botUsername);
     script.setAttribute("data-size", "large");
     script.setAttribute("data-onauth", "onTelegramAuth(user)");
     script.setAttribute("data-request-access", "write");
     script.async = true;
+
+    // إذا لم يتم تحميل الـ Widget بعد 6 ثوانٍ (أو ظهر خطأ Domain)
+    // → نعرض للمستخدم زر "أرسل الأمر إلى BotFather" يفتح رابط محدد مسبقاً
+    let telegramLoaded = false;
+    script.onload = () => { telegramLoaded = true; };
+    setTimeout(() => {
+      if (!telegramLoaded) {
+        const fallbackDiv = document.createElement("div");
+        fallbackDiv.className = "mt-2 p-2 rounded-md bg-background/50 text-[11px] text-muted-foreground text-center border";
+        const a = document.createElement("a");
+        a.href = `https://t.me/${botUsername}?start=setdomain_${encodeURIComponent(currentDomain)}`;
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        a.className = "text-primary font-semibold";
+        a.textContent = "👉 اضغط هنا لتكوين بوت Telegram تلقائياً (افتح @BotFather)";
+        fallbackDiv.appendChild(a);
+        container.appendChild(fallbackDiv);
+      }
+    }, 6000);
     container.appendChild(script);
 
     return () => {

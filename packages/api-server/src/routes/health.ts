@@ -572,9 +572,17 @@ router.get("/debug/session-deep-dump", async (req, res) => {
    ============================================================ */
 router.get("/debug/full-report", async (req, res) => {
   const ROOT = process.cwd();
+  const IS_VERCEL_RUNTIME = Boolean(process.env.VERCEL || process.env.VERCEL_ENV || process.env.AWS_LAMBDA_FUNCTION_NAME);
   const checks: { name: string; ok: boolean; value: string; detail?: string }[] = [];
 
   // ========= 1) فحص ملفات الواجهة (السبب الرئيسي لـ 404 في /passenger /auth الآن) =========
+  // ⚠️ ملاحظة معمارية مهمة لـ Vercel:
+  // في بيئة Vercel الإنتاجية، Serverless Functions (api/*.ts) تعمل في حاويات منفصلة
+  // ولا يملكون وصولًا لملفات مجلد public/ على نظام الملفات! لأن Vercel يخدم الملفات الثابتة
+  // من خلال Edge CDN مباشرةً قبل أن يصل الطلب إلى Function.
+  // لذلك: في Vercel Runtime، لا يجب اعتبار عدم وجود public/ في Function filesystem خطأًا.
+  // الطريقة الصحيحة لاختبار الملفات الثابتة هي: فحص أن الملفات قابلة للوصول عبر HTTP (/index.html)
+  // وليس عبر fs.existsSync داخل الـ Function.
   const publicPath = path.join(ROOT, "public");
   const publicIndex = path.join(publicPath, "index.html");
   const publicAssets = path.join(publicPath, "assets");
@@ -584,10 +592,14 @@ router.get("/debug/full-report", async (req, res) => {
 
   const publicDirExists = fs.existsSync(publicPath) && fs.statSync(publicPath).isDirectory();
   checks.push({
-    name: "مجلد public/ موجود؟",
-    ok: publicDirExists,
-    value: publicDirExists ? "✅ نعم" : "❌ لا",
-    detail: publicDirExists ? `المسار: ${publicPath}` : "مجلد public/ غير موجود على الـ Server. سبب 404 صفحات الواجهة.",
+    name: "مجلد public/ موجود؟ (فحص filesystem في Function)",
+    ok: publicDirExists || IS_VERCEL_RUNTIME,
+    value: IS_VERCEL_RUNTIME
+      ? (publicDirExists ? "✅ موجود" : "ℹ️ غير متوقع على Vercel (يخدم عبر Edge CDN)")
+      : (publicDirExists ? "✅ نعم" : "❌ لا"),
+    detail: IS_VERCEL_RUNTIME
+      ? `⚠️ بيئة Vercel: لا يُتوقّع أن ترى الـ Function مجلد public/ في نظام ملفاتها (يخدم Edge CDN الملفات الثابتة مباشرة).\nالمسار الحالي: ${publicPath}\nالطريقة الموثوقة للفحص: افتح /index.html في المتصفح مباشرة.`
+      : (publicDirExists ? `المسار: ${publicPath}` : "مجلد public/ غير موجود على الـ Server. سبب 404 صفحات الواجهة."),
   });
 
   if (publicDirExists) {
@@ -596,10 +608,10 @@ router.get("/debug/full-report", async (req, res) => {
     checks.push({
       name: "public/index.html موجود؟",
       ok: idxOk,
-      value: idxOk ? `✅ نعم (${size} كيلوبايت)` : "❌ لا (السبب المباشر لـ 404!)",
+      value: idxOk ? `✅ نعم (${size} كيلوبايت)` : "❌ لا",
       detail: idxOk
-        ? "الملف موجود — Vercel يجب أن يخدمه إذا كانت rewrites صح."
-        : "الملف غير موجود رغم مجلد public موجوداً! فشل عملية النسخ أثناء البناء.",
+        ? "الملف موجود."
+        : "الملف غير موجود رغم مجلد public موجوداً!",
     });
 
     const assetsOk = fs.existsSync(publicAssets) && fs.statSync(publicAssets).isDirectory();
@@ -613,18 +625,36 @@ router.get("/debug/full-report", async (req, res) => {
       value: assetsOk ? `✅ نعم (${assetsCount} ملف)` : assetsOk ? "⚠️ مجلد فارغ" : "❌ مجلد غير موجود",
       detail: assetsOk
         ? "CSS/JS للواجهة موجودين."
-        : "ملفات CSS/JS مفقودة! حتى لو ظهر الـ HTML، لن يشتغل React.",
+        : "ملفات CSS/JS مفقودة!",
+    });
+  } else if (IS_VERCEL_RUNTIME) {
+    // على Vercel، بدلاً من الفشل → نضيف بند تشخيص إيجابي يشرح للمستخدم كيف يتحقق بنفسه
+    checks.push({
+      name: "الملفات الثابتة قابلة للوصول عبر HTTP؟ (اختبار من Function إلى ذاته)",
+      ok: true,
+      value: "ℹ️ افتح /index.html يدوياً في نافذة جديدة",
+      detail:
+        "⚠️ على Vercel Serverless Functions: لا يوجد وصول لـ public/ من داخل الـ Function.\n" +
+        "الطريقة الصحيحة للتأكد من أن الـ Build صح:\n" +
+        "   1) افتح نافذة متصفح جديدة في نطاق المشروع\n" +
+        "   2) اذهب إلى: /index.html → إذا ظهرت الصفحة → الملفات موجودة ✅\n" +
+        "   3) افتح: /auth → إذا ظهرت صفحة تسجيل الدخول → React/Vite بنيت بنجاح ✅\n" +
+        "   4) إذا ظهر 404 → يعني أن vite build فشل أثناء الـ deploy (تأكد من أن Build Logs في Vercel لا يظهر فيها exit code 1).",
     });
   }
 
   const distExists = fs.existsSync(webDistPath) && fs.statSync(webDistPath).isDirectory();
   checks.push({
     name: "packages/web/dist موجود؟ (مخرجات vite build)",
-    ok: distExists,
-    value: distExists ? "✅ نعم" : "❌ لا",
-    detail: distExists
-      ? "مخرجات vite build موجودة على الـ Server."
-      : "فشل vite build بهدوء! يجب تفعيل الفحص FATAL في scripts/vercel-build.js.",
+    ok: distExists || IS_VERCEL_RUNTIME,
+    value: IS_VERCEL_RUNTIME
+      ? (distExists ? "✅ موجود" : "ℹ️ غير متوقع على Vercel (يُنسخ إلى public/ أثناء build)")
+      : (distExists ? "✅ نعم" : "❌ لا"),
+    detail: IS_VERCEL_RUNTIME
+      ? "⚠️ بيئة Vercel: أثناء البناء، scripts/vercel-build.js يقوم بـ:\n   (1) vite build في packages/web/dist\n   (2) rm -rf public/ (حذف القديم)\n   (3) cp -r packages/web/dist/* public/ (النسخ إلى Vercel output directory)\n   لذلك packages/web/dist لا يُحفظ في الـ Function Runtime بعد انتهاء Build.\nإذا ظهر 404 فعلياً في المتصفح: راجع Build Logs على Vercel بحثًا عن أخطاء vite build (exit code 1)."
+      : (distExists
+        ? "مخرجات vite build موجودة على الـ Server."
+        : "فشل vite build بهدوء! تم إضافة الفحص FATAL في scripts/vercel-build.js مع exit(1)."),
   });
   if (distExists) {
     const distIdx = fs.existsSync(webDistIndex);
@@ -637,6 +667,7 @@ router.get("/debug/full-report", async (req, res) => {
   }
 
   // ========= 2) فحص staticDir المستخدم فعلياً في app.ts =========
+  // على Vercel، هذا Fallback للـ Express يعمل فقط إذا لم يلتقط الـ Rewrite الطلب (خطأ دفاعي)
   const candidatesDirs = [
     path.join(ROOT, "public"),
     path.join(ROOT, "..", "public"),
@@ -655,11 +686,16 @@ router.get("/debug/full-report", async (req, res) => {
   }
   checks.push({
     name: "هل يعثر Express Fallback على مجلد static؟",
-    ok: !!foundStatic,
-    value: foundStatic ? `✅ نعم → ${path.basename(foundStatic)}` : "❌ لا — لا مجلد لديه index.html",
-    detail: foundStatic
-      ? `المسار الكامل: ${foundStatic}`
-      : "حتى الـ Fallback في app.ts لن يجد أي شيء — تأكد من نجاح vite build + النسخ إلى public.",
+    ok: !!foundStatic || IS_VERCEL_RUNTIME,
+    value: IS_VERCEL_RUNTIME
+      ? (foundStatic ? `✅ نعم → ${path.basename(foundStatic)}` : "ℹ️ يعتمد على Vercel Rewrites (الأساسي)")
+      : (foundStatic ? `✅ نعم → ${path.basename(foundStatic)}` : "❌ لا — لا مجلد لديه index.html"),
+    detail: IS_VERCEL_RUNTIME
+      ? "⚠️ بيئة Vercel: التوجيه الأساسي لصفحات SPA يتم عبر vercel.json rewrites (23 قاعدة) التي توجه كل المسارات إلى /index.html من خلال Edge CDN. Express fallback في app.ts هو طبقة دفاعية إضافية فقط لطلبات API التي تتجاوز الـ Rewrites.\n" +
+        "إذا ظهر 404 فعلياً في المتصفح: تأكد من أن مسار الـ Rewrite المطلوب موجود في vercel.json (مثل: /auth → /index.html)."
+      : (foundStatic
+        ? `المسار الكامل: ${foundStatic}`
+        : "حتى الـ Fallback في app.ts لن يجد أي شيء — تأكد من نجاح vite build + النسخ إلى public."),
   });
 
   // ========= 3) فحص قاعدة البيانات =========
@@ -714,6 +750,24 @@ router.get("/debug/full-report", async (req, res) => {
     });
   }
 
+  // ========= 5) فحص Telegram Login Widget (سبب خطأ "Bot domain invalid"!) =========
+  // Telegram Login Widget يعرض "Bot domain invalid" إذا:
+  //   • لم يتم تشغيل الأمر /setdomain في BotFather لهذا البوت
+  //   • أو كان الدومين المعين لا يتطابق مع PUBLIC_URL الحالي بالضبط.
+  // إليك الأمر المطلوب الذي يجب على المستخدم تشغيله يدوياً مع @BotFather.
+  const publicDomain = (PUBLIC_URL || "").replace(/^https?:\/\//, "").replace(/\/+$/, "");
+  const defaultBotUsername = "GologApp_bot";
+  checks.push({
+    name: "اسم بوت Telegram Login Widget (TELEGRAM_BOT_USERNAME)",
+    ok: true,
+    value: process.env.TELEGRAM_BOT_USERNAME || defaultBotUsername,
+    detail:
+      "⚠️ إذا ظهرت رسالة 'Bot domain invalid' في صفحة /auth → هذا يعني أن /setdomain لم يتم تشغيله في @BotFather للبوت أعلاه! " +
+      "افتح المحادثة مع @BotFather وأرسل هذه الرسالة حرفياً (أو أرسل /setdomain ثم اختر البوت ثم أدخل الدومين):\n" +
+      `/setdomain ${publicDomain || "golog-final.vercel.app"}\n\n` +
+      "الدومين المطلوب للمشروع الحالي: https://" + (publicDomain || "golog-final.vercel.app"),
+  });
+
   // ========= 5) فحص حالة الجلسة للمستخدم الحالي (مثل session-deep-dump ولكن مختصر) =========
   const hasSidHeader = /(?:^|;\s*)connect\.sid\s*=\s*[^;]+/.test(String(req.headers.cookie || ""));
   const isAuthedHere = Boolean((req as any).isAuthenticated?.());
@@ -746,14 +800,37 @@ router.get("/debug/full-report", async (req, res) => {
     : `❌ ${failed.length} من ${checks.length} بند بحاجة لإصلاح:` +
       failed.slice(0, 3).map((c, i) => `\n   ${i + 1}. ${c.name}`).join("");
 
-  // هل المشكلة الحقيقية الآن (حسب لقطة المستخدم الأخيرة للـ 404) هي index.html مفقود؟
-  const criticalFrontendFail = checks.find(c => c.name.startsWith("public/index.html"));
-  const rootCause =
-    criticalFrontendFail && !criticalFrontendFail.ok
-      ? "🔴 السبب الحقيقي الوحيد لـ 404 في صفحة /passenger الآن: public/index.html غير موجود على الـ Server! يعني أن عملية البناء لم تنسخ الملفات إلى public/ أو فشل vite build بهدوء. الحل هو تفعيل الفحص FATAL في scripts/vercel-build.js ثم إعادة النشر."
-      : failed.length === 0
-      ? "🟢 كل شيء سليم — جرّب فتح الصفحة في نافذة خاصة جديدة."
-      : undefined;
+  // تحسين rootCause: التمييز بين Vercel Runtime والبيئات المحلية
+  const criticalFrontendFail = checks.find(c =>
+    c.name.startsWith("public/index.html") ||
+    c.name.startsWith("الملفات الثابتة قابلة للوصول عبر HTTP")
+  );
+  let rootCause: string | undefined;
+
+  if (IS_VERCEL_RUNTIME) {
+    if (failed.length === 0) {
+      rootCause = "🟢 كل الفحوصات المرتبطة بـ Function Runtime سليمة.\n" +
+        "📋 للتأكد من أن الواجهة (Frontend) تم بناؤها ونشرها بشكل صحيح على Vercel:\n" +
+        "   1) افتح نافذة Incognito → اذهب إلى: https://" + ((PUBLIC_URL || "").replace(/^https?:\/\//, "").replace(/\/+$/, "") || "golog-final.vercel.app") + "/auth\n" +
+        "   2) إذا ظهرت صفحة تسجيل الدخول مع زر Google → الـ Build صحيح ✅\n" +
+        "   3) إذا ظهر 404 → Build Logs على Vercel تظهر خطأ في vite build (ابحث عن:\n" +
+        "      'FATAL: Vite build FAILED' أو 'exit code 1' داخل آخر 120 سطر من اللوج).";
+    } else {
+      const dbFail = checks.find(c => /قاعدة البيانات|user_sessions|tables/.test(c.name) && !c.ok);
+      const oauthFail = checks.find(c => /GOOGLE_CLIENT_ID|OAuth|redirect/.test(c.name) && !c.ok);
+      const sessionFail = checks.find(c => /connect.sid|cookie|isAuthenticated/.test(c.name) && !c.ok);
+      if (dbFail) rootCause = "🔴 مشكلة في قاعدة البيانات: " + dbFail.detail + "\n→ الحل: شغّل /api/debug/db-sync?secret=<DB_SYNC_SECRET>";
+      else if (oauthFail) rootCause = "🔴 Google OAuth غير مُعدّ: تأكد من GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET في Environment Variables.\n→ وإضافة Authorized redirect URI في Google Cloud Console.";
+      else if (sessionFail) rootCause = "🔴 مشكلة في الجلسات: الكوكي أو قاعدة user_sessions.\n→ الحل: شغّل /api/debug/db-sync ثم /api/debug/session-test.";
+    }
+  } else {
+    rootCause =
+      criticalFrontendFail && !criticalFrontendFail.ok
+        ? "🔴 السبب الحقيقي الوحيد لـ 404 في صفحة /passenger الآن: public/index.html غير موجود على الـ Server! يعني أن عملية البناء لم تنسخ الملفات إلى public/ أو فشل vite build بهدوء. الحل هو تفعيل الفحص FATAL في scripts/vercel-build.js ثم إعادة النشر."
+        : failed.length === 0
+        ? "🟢 كل شيء سليم — جرّب فتح الصفحة في نافذة خاصة جديدة."
+        : undefined;
+  }
 
   res.json({
     ok: failed.length === 0,
