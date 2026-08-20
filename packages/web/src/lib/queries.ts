@@ -32,7 +32,7 @@ export const qk = {
   notifications: ["notifications"] as const,
 };
 
-export function useGetMe(options?: { retry?: boolean }) {
+export function useGetMe(options?: { retry?: boolean | number }) {
   return useQuery<User | null>({
     queryKey: qk.me,
     queryFn: async () => {
@@ -50,7 +50,14 @@ export function useGetMe(options?: { retry?: boolean }) {
         return null;
       }
     },
-    retry: options?.retry ?? false,
+    // ===================== الإصلاح الحاسم =====================
+    // سبب 90% من مشاكل "العودة للصفحة الهبوط" هو أن أول GET /auth/me
+    // بعد redirect من Google يفشل عرضياً (cold start, race condition,
+    // تأخير في استلام الكوكي من المتصفح بعد 302) → وفلانا كانت retry=false
+    // → لم تحاول مرة ثانية أبداً! → المستخدم يُعامَل كغير مسجل للأبد.
+    // الحل: retry=3 تلقائياً بمعدل 800ms بين المحاولات.
+    retry: options?.retry ?? 3,
+    retryDelay: (attempt) => 800,
     staleTime: 60000,
   });
 }

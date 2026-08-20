@@ -1,6 +1,6 @@
 import { Router } from "express";
 import passport from "../lib/passport";
-import { db, usersTable } from "@golog/db";
+import { db, usersTable, pool } from "@golog/db";
 import { eq } from "drizzle-orm";
 import { verifyTelegramLogin, type TelegramLoginPayload } from "../lib/telegramAuth";
 import { GOOGLE_CLIENT_ID } from "../lib/env";
@@ -148,9 +148,12 @@ router.get(
             console.warn("[auth/google/callback] ⚠️  فشل التحقق الإضافي من قاعدة البيانات (غير قاتل):", verifyErr?.message);
           }
 
-          // كل شيء مؤكد وصوله الآن → redirect بأمان
-          const dest = user?.isNew ? "/complete-profile" : "/";
-          console.log("[auth/google/callback] ✅ إعادة توجيه المستخدم المصادق إليه:", dest, "| user.id =", (user as any)?.id);
+          // كل شيء مؤكد وصوله الآن → redirect بأمان مباشرة
+          // إلى الصفحة الصحيحة حسب الدور (لا تذهب إلى / أصلاً —
+          // حتى لا نعتمد على منطق React الهش في إعادة التوجيه!)
+          const role = String((user as any)?.currentRole || "passenger").toLowerCase();
+          const dest = user?.isNew ? "/complete-profile" : role === "driver" ? "/driver" : "/passenger";
+          console.log("[auth/google/callback] ✅ إعادة توجيه المستخدم المصادق إليه:", dest, "| user.id =", (user as any)?.id, "| role =", role);
           return res.redirect(dest);
         });
       });

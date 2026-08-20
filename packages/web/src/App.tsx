@@ -62,6 +62,18 @@ function AppContent() {
             ? "/driver"
             : "/passenger";
         setLocation(target);
+        // ================ الإصلاح الحاسم =================
+        // Wouter أحياناً لا يطبق setLocation إذا تم استدعاؤه قبل
+        // أن يكتمل الـ Router initialization خلال أول render بعد
+        // redirect من Google. لحظة Hard Fallback نضطره نحن
+        // باستخدام window.location.href بعد 150ms إذا ظل في نفس
+        // المكان. هذا ضمان 100% بأن المستخدم لن يبقى في الهبوط.
+        const fromLoc = location;
+        setTimeout(() => {
+          if (window.location.pathname === fromLoc || window.location.pathname === "/" || window.location.pathname === "/auth") {
+            window.location.href = target;
+          }
+        }, 150);
       }
     } else {
       const isProtected =
@@ -69,6 +81,11 @@ function AppContent() {
         startsWithAny(location, ["/messages/"]);
       if (isProtected && location !== "/auth") {
         setLocation("/auth");
+        setTimeout(() => {
+          if (window.location.pathname !== "/auth" && window.location.pathname.startsWith("/m")) {
+            window.location.href = "/auth";
+          }
+        }, 200);
       }
     }
   }, [isAuthenticated, isLoading, location, setLocation, user]);
