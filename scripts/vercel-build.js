@@ -106,14 +106,27 @@ async function main() {
   // ------------------------------------------------------------
   // الخطوة 1: تثبيت تبعيات الواجهة الأمامية وإنشائها
   // ------------------------------------------------------------
-  const WEB_NODE_MODULES = path.join(WEB_DIR, "node_modules");
-  if (!fs.existsSync(WEB_NODE_MODULES)) {
-    log("Installing frontend dependencies (packages/web)...");
-    run("npm install", WEB_DIR);
-  }
+  // ⚠️ الإصلاح الحاسم: npm install إجباري دائماً في packages/web
+  // حتى لو كان node_modules ظاهراً — لأن Vercel أحياناً لا تجري
+  // install للحزم الداخلية في workspaces (تبقى dependencies
+  // على مستوى الجذر فقط!). هذا كان السبب الرئيسي لفشل vite build
+  // بهدوء دون exit code لأنه لم يجد vite تجميعياً أصلاً داخل
+  // packages/web/node_modules/.bin/vite.
+  log("🚀 FORCED: running npm install inside packages/web (even if node_modules exists!)");
+  run("npm install --no-audit --no-fund --prefer-offline 2>&1 | tail -80", WEB_DIR);
 
   log("Building frontend (vite build)...");
-  run("npm run build", WEB_DIR);
+  // الإجبار على طباعة آخر 120 سطر في الـ stdout/stderr لـ vite
+  // حتى نرى أخطاء TypeScript مباشرة في Vercel Build Logs بدلاً
+  // من الـ "success" الكاذب.
+  const VITE_BUILD_CMD =
+    "npm run build 2>&1" +
+    " | tee /tmp/golog-vite-build.log" +
+    " | tail -120 ; " +
+    "EXIT=${PIPESTATUS[0]} ; " +
+    "if [ ${EXIT} -ne 0 ]; then echo; echo \"=================== VITE BUILD FAILED (last 120 lines above) ===================\" ; fi ; " +
+    "exit ${EXIT}";
+  run(VITE_BUILD_CMD, WEB_DIR);
 
   if (!fs.existsSync(WEB_DIST)) {
     console.error("[vercel-build] FATAL: frontend dist folder is missing after build!");
