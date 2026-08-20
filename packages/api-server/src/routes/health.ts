@@ -71,24 +71,33 @@ router.get("/debug/db-sync", (req, res) => {
   try {
     // البحث عن مجلد db بحيث يعمل مهما كان مسار التشغيل:
     //   - محلياً عبر tsx:        packages/api-server/src/routes
-    //   - على Vercel بعد Bundle: _api_bundle/
-    // نراجع قائمة مرتبة حسب الأولوية ونختار أول مجلد يحتوي على drizzle.config.ts
+    //   - على Vercel بعد Bundle: _api_bundle/ (المجلد نفسه في الجذر = packages/db موجود أيضاً)
+    // نراجع قائمة مرتبة حسب الأولوية — هذه القائمة شاملة لكل السيناريوهات
+    // الممكنة بما في ذلك عندما يكون cwd = /var/task أو /var/task/api
+    const cwdNow = process.cwd();
     const candidates = [
-      // بعد الـ Bundle على Vercel: _api_bundle/ → packages/db في الجذر
-      path.resolve(process.cwd(), "packages", "db"),
-      // تشغيل محلي من packages/api-server
-      path.resolve(__dirname, "..", "..", "..", "db"),
-      // تشغيل محلي من جذر المشروع عبر ts-node أعمق
+      path.resolve(cwdNow, "packages", "db"),
+      path.resolve(cwdNow, "..", "packages", "db"),
+      path.resolve(cwdNow, "db"),
+      path.resolve(cwdNow, "..", "db"),
+      // احتياطي إذا كان cwd هو api (مثل /var/task/api)
+      path.resolve(cwdNow, "..", "..", "packages", "db"),
+      path.resolve(cwdNow, "..", "..", "db"),
       path.resolve(__dirname, "..", "..", "..", "..", "packages", "db"),
-      // احتياطي إذا كان cwd هو مجلد packages/api-server نفسه
-      path.resolve(process.cwd(), "..", "db"),
+      path.resolve(__dirname, "..", "..", "..", "..", "db"),
+      path.resolve(__dirname, "..", "..", "..", "db"),
+      // من داخل Bundle إذا كان _api_bundle هو المجلد
+      path.resolve(cwdNow, "_api_bundle", "..", "packages", "db"),
     ];
 
     let workDir = null as string | null;
     for (const c of candidates) {
-      if (fs.existsSync(path.join(c, "drizzle.config.ts"))) {
-        workDir = c;
-        break;
+      if (fs.existsSync(c)) {
+        if (fs.existsSync(path.join(c, "drizzle.config.ts")) || fs.existsSync(path.join(c, "drizzle.config.js"))) {
+          workDir = c;
+          break;
+        }
+        if (!workDir) workDir = c; // أقلّها إذا كان المجلد موجوداً ولكن الملف لم يُحَوِّل بعد
       }
     }
     if (!workDir) {
