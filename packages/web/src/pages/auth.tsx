@@ -35,7 +35,21 @@ export default function AuthPage() {
   useEffect(() => {
     const params = new URLSearchParams(search);
     const err = params.get("error");
-    if (err === "google") setErrorMsg("فشل تسجيل الدخول عبر Google. حاول مجدداً.");
+    const debug = params.get("debug");
+    const details = params.get("details");
+    if (err) {
+      let msg = "فشل تسجيل الدخول عبر Google. حاول مجدداً.";
+      if (err === "google_missing") msg = "تسجيل الدخول عبر Google غير مُفعَّل بعد على الخادم.";
+      else if (err === "google_internal") msg = "حدث خطأ داخلي أثناء بداية تسجيل الدخول عبر Google.";
+      else if (err === "google_crash") msg = "انهار مسار تسجيل الدخول قبل إكماله.";
+      else if (err === "google_failed") msg = "رفضت Google المصادقة، أو انتهت صلاحية الرابط.";
+      else if (err === "session_failed") msg = "تم تسجيل الدخول بنجاح لكن فشل حفظ الجلسة.";
+      const extra = debug || details;
+      if (extra) {
+        msg += "\n\n🔎 تفاصيل إضافية:\n" + decodeURIComponent(extra);
+      }
+      setErrorMsg(msg);
+    }
   }, [search]);
 
   useEffect(() => {

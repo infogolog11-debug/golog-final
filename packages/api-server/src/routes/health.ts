@@ -132,4 +132,81 @@ router.get("/debug/db-sync", (req, res) => {
   }
 });
 
+/* ============================================================
+   نقطة نهاية اختبار الجلسات: /api/debug/session-test
+   ------------------------------------------------------------
+   أسهل طريقة في العالم لمعرفة إذا كان connect-pg-simple يعمل
+   فعلاً مع قاعدة البيانات (جدول user_sessions):
+     1. نكتب قيمة عشوائية في req.session
+     2. نحفظها (session.save — نفس الشيء الذي تستخدمه passport)
+     3. نقرأها للتأكد من نجاح العملية.
+   هذا الاختبار مهم جداً لأن Google OAuth تعتمد على حفظ
+   الـ state داخل الجلسة قبل إعادة التوجيه إلى صفحة Google.
+   ============================================================ */
+router.get("/debug/session-test", (req, res) => {
+  const probe = `probe_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  const steps: { name: string; ok: boolean; detail?: string }[] = [];
+
+  steps.push({
+    name: "1. req.session موجود؟",
+    ok: typeof req.session === "object" && req.session !== null,
+    detail: typeof req.session === "object"
+      ? "موجود — نوع req.session: object"
+      : "مفقود — تحقق من تحميل express-session في app.ts قبل التحميل من health.ts.",
+  });
+
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (req.session as any).__golog_probe = probe;
+    steps.push({
+      name: "2. تمت كتابة قيمة في الجلسة (memory).",
+      ok: true,
+      detail: "قيمة الاختبار: " + probe.slice(0, 24) + "...",
+    });
+  } catch (e: any) {
+    steps.push({
+      name: "2. فشل الكتابة في الجلسة (memory).",
+      ok: false,
+      detail: e?.message || String(e),
+    });
+    return res.status(500).json({ ok: false, steps });
+  }
+
+  req.session.save((saveErr) => {
+    if (saveErr) {
+      steps.push({
+        name: "3. session.save() إلى PostgreSQL (خطوة الخطأ عادةً!).",
+        ok: false,
+        detail:
+          "فشلت العملية! السبب الأغلب: جدول 'user_sessions' غير موجود أو أذونات خاطئة لـ DATABASE_URL. تفاصيل: " +
+          (saveErr?.message || String(saveErr)),
+      });
+      return res.status(500).json({
+        ok: false,
+        steps,
+        tip:
+          "قم بتشغيل: https://<دومينك>/api/debug/db-sync?secret=<DB_SYNC_SECRET> لإنشاء جداول قاعدة البيانات تلقائياً.",
+      });
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const gotBack = (req.session as any).__golog_probe;
+    const matched = gotBack === probe;
+    steps.push({
+      name: "3. session.save() إلى PostgreSQL تم بنجاح.",
+      ok: matched,
+      detail: matched
+        ? "تم حفظ الجلسة وإرجاعها بنفس القيمة."
+        : "عدم تطابق — تم استعادة قيمة خاطئة: " + String(gotBack),
+    });
+    return res.status(200).json({
+      ok: matched,
+      sessionID: req.sessionID?.slice(0, 12) + "...",
+      steps,
+      readyForGoogleOAuth: matched
+        ? "✅ نعم — الاختبار مرّ بنجاح. الجلسات تعمل، جرب تسجيل الدخول عبر Google الآن."
+        : "❌ لا — تحقق من الخطوات الأعلاه.",
+    });
+  });
+});
+
 export default router;

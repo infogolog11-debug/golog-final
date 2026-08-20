@@ -9,13 +9,54 @@ const router = Router();
 
 // --- Google OAuth ---
 router.get("/auth/google", (req, res, next) => {
-  if (!GOOGLE_CLIENT_ID) {
-    return res.status(503).json({
-      error: "تسجيل الدخول عبر Google غير مُفعَّل حالياً",
-      details: "GOOGLE_CLIENT_ID غير مُعرَّف في إعدادات البيئة على Vercel.",
+  try {
+    if (!GOOGLE_CLIENT_ID) {
+      console.error("[auth/google] ❌ GOOGLE_CLIENT_ID غير مُعرَّف في إعدادات Vercel.");
+      return res.redirect(
+        "/auth?error=google_missing&details=" +
+          encodeURIComponent("أضف GOOGLE_CLIENT_ID و GOOGLE_CLIENT_SECRET في Environment Variables على Vercel ثم أعد النشر.")
+      );
+    }
+    // تسجيل تشخيصي فائق لكي نرى في Vercel Runtime Logs أين يتوقف بالضبط
+    console.log("[auth/google] ✅ STEP 1/4: بداية مسار Google — الـ Session ID الحالي:", req.sessionID?.slice(0, 8) + "...");
+    console.log("[auth/google] ✅ STEP 2/4: req.session موجودة؟", typeof req.session === "object" && req.session !== null);
+    console.log("[auth/google] ✅ STEP 3/4: GOOGLE_CLIENT_ID مُعَرَّف =", GOOGLE_CLIENT_ID.slice(0, 8) + "...");
+    console.log("[auth/google] ✅ STEP 4/4: ندعو passport.authenticate الآن — إذا توقف عند هنا → المشكلة في حفظ الـ state داخل الجلسة.");
+
+    // مصيدة الأخطاء الحقيقية: بدلاً من أن يمرر passport الخطأ للـ global handler بصمت
+    // نعالجه هنا مع تسجيل كل تفاصيله وإرجاعها للمستخدم عبر debug query
+    passport.authenticate("google", { scope: ["profile", "email"] })(req, res, (wrapErr?: any) => {
+      if (wrapErr) {
+        console.error("[auth/google] ❌ passport.authenticate فشل في المرحلة الأولى (قبل إعادة التوجيه إلى Google):", wrapErr);
+        console.error("[auth/google] ❌ stack:", wrapErr?.stack);
+        const msg =
+          wrapErr?.message ||
+          (typeof wrapErr === "string" ? wrapErr : "خطأ غير معروف في المرحلة الأولى — راجع Vercel Runtime Logs");
+        // التخمين الأكثر شيوعاً للأسباب:
+        let hint = "";
+        const m = (msg || "").toLowerCase();
+        if (m.includes("session") || m.includes("connect-pg") || m.includes("sessions") || m.includes("relation")) {
+          hint =
+            " — السبب الأغلب: جدول user_sessions غير موجود! افتح https://<دومينك>/api/debug/db-sync?secret=<DB_SYNC_SECRET> لإنشائه فوراً.";
+        } else if (m.includes("client_secret") || m.includes("client_id") || m.includes("oauth")) {
+          hint = " — السبب الأغلب: GOOGLE_CLIENT_SECRET أو GOOGLE_CLIENT_ID ناقص أو غير صحيح.";
+        }
+        return res.redirect(
+          "/auth?error=google_internal&debug=" + encodeURIComponent(msg + hint)
+        );
+      }
+      // إذا وصلنا هنا بدون خطأ، يعني passport.authenticate قام بإرسال الـ redirect بنجاح (لن يُنفّذ السطر التالي)
+      console.log("[auth/google] ✅ passport.authenticate انتهى — من المفترض الآن أن يتم إعادة التوجيه إلى صفحة Google.");
+      next?.();
     });
+  } catch (topLevelErr: any) {
+    console.error("[auth/google] ❌ استثناء علوي فاشل في مسار Google:", topLevelErr);
+    console.error("[auth/google] ❌ stack:", topLevelErr?.stack);
+    const msg = topLevelErr?.message || String(topLevelErr || "خطأ علوي غير متوقع");
+    return res.redirect(
+      "/auth?error=google_crash&debug=" + encodeURIComponent(msg)
+    );
   }
-  passport.authenticate("google", { scope: ["profile", "email"] })(req, res, next);
 });
 
 router.get(
