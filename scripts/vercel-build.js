@@ -139,6 +139,7 @@ async function main() {
   // - مسارات workspaces على Vercel
   // - إعداد exports في package.json للحزم الداخلية
   // ------------------------------------------------------------
+  const DB_DIR = path.join(ROOT, "packages", "db");
   const API_DIR = path.join(ROOT, "packages", "api-server");
   const API_NODE_MODULES = path.join(API_DIR, "node_modules");
   if (!fs.existsSync(API_NODE_MODULES)) {
