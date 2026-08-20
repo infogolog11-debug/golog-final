@@ -47,5 +47,15 @@ export const api = {
 };
 
 export function googleLoginUrl() {
-  return `${API_BASE}/auth/google`;
+  const base = import.meta.env.VITE_API_BASE_URL || "/api";
+  const url = `${base}/auth/google`;
+  // تصحيح مهم: لو المستخدم كان على صفحة مثل /auth ولم يبدأ base بـ / أو http
+  // نضيف بادئة الجذر لضمان أن المتصفح يعتبرها مساراً مطلقاً من الدومين (وليس نسبياً)
+  const fixed =
+    url.startsWith("http://") || url.startsWith("https://") || url.startsWith("/")
+      ? url
+      : `/${url.replace(/^\/+/, "")}`;
+  // eslint-disable-next-line no-console
+  console.log("[DEBUG] googleLoginUrl resolved to:", fixed, "  API_BASE_VITE=", import.meta.env.VITE_API_BASE_URL);
+  return fixed;
 }
