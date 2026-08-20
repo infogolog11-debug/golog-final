@@ -40,9 +40,21 @@ export function Header({ user }: { user: User }) {
           setLocation("/auth");
           return;
         }
+        // 403 — مثلاً الحساب محظور
+        if (e?.status === 403) {
+          toast({
+            title: "غير مسموح",
+            description: e?.message || "هذا الحساب لا يملك صلاحية القيام بهذه العملية",
+            variant: "destructive",
+          });
+          return;
+        }
+        // أي خطأ آخر → أظهر السبب الحقيقي إن وجد + كود الحالة
+        const statusPart = e?.status ? ` (كود ${e.status})` : "";
+        const msg = e?.message ? e.message : "حاول مرة أخرى بعد لحظات";
         toast({
-          title: "تعذر تبديل الدور",
-          description: e?.message || "حاول مرة أخرى بعد لحظات",
+          title: "تعذر تبديل الدور" + statusPart,
+          description: msg,
           variant: "destructive",
         });
         console.error("[switch-role] ERROR:", e);

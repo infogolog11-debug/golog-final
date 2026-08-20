@@ -38,22 +38,45 @@ router.post("/users/me/switch-role", requireAuth, async (req, res) => {
   const { role } = req.body as { role: "driver" | "passenger" };
   if (role !== "driver" && role !== "passenger") return res.status(400).json({ error: "دور غير صالح" });
 
-  const [updated] = await db
-    .update(usersTable)
-    .set({ currentRole: role })
-    .where(eq(usersTable.id, userId))
-    .returning();
+  let updated: any = null;
+  try {
+    const [row] = await db
+      .update(usersTable)
+      .set({ currentRole: role })
+      .where(eq(usersTable.id, userId))
+      .returning();
+    updated = row;
+  } catch (dbErr: any) {
+    console.error("[switch-role] DB UPDATE FAILED:", dbErr?.message || dbErr);
+    return res.status(500).json({
+      error: "فشل تحديث الدور في قاعدة البيانات",
+      detail: process.env.NODE_ENV === "production" ? undefined : (dbErr?.message || String(dbErr)),
+    });
+  }
 
-  // خطوة مهمة جداً: تحديث كائن req.user في الجلسة (passport.session)
-  // حتى لا تظل الاستجابات التالية (مثل GET /auth/me) تُرجع الدور القديم حتى تسجيل الخروج
+  // خطوة مهمة جداً: تحديث كائن req.user في الذاكرة فوراً
   if (req.user && updated) {
     (req.user as any) = updated;
-    // passport يخزن نسخة في session.passport.user أيضاً — نُحدثها يدويًا لضمان الاتساق
+  }
+
+  // حفظ الجلسة في PostgreSQL — محاط بـ try/catch لأنه
+  // إضافة غير قاتلة: لو فشل (جدول sessions غير مُنشأ، أو أي خطأ من connect-pg-simple)
+  // لا يعني أن تبديل الدور نفسه فشل! نجيب النجاح ونظهر تحذيراً في الـ log فقط.
+  // يعيد تنشيط الصفحة يحدّث الجلسة من خلال deserializeUser تلقائياً.
+  try {
     if ((req.session as any)?.passport?.user !== undefined) {
       (req.session as any).passport.user = updated.id;
     }
-    // إعادة حفظ الجلسة صراحةً لضمان كتابة التغيير في متجر الجلسات (pg)
-    await new Promise<void>((resolve) => req.session.save(() => resolve()));
+    await new Promise<void>((resolve, reject) => {
+      req.session.save((sessionErr?: any) => (sessionErr ? reject(sessionErr) : resolve()));
+    });
+  } catch (saveErr: any) {
+    console.warn(
+      "[switch-role] ⚠️  session.save() فشل لكن الدور تُحدّث بنجاح في قاعدة البيانات — المتصفح سيُحدّث عند أول استعلام /auth/me." +
+      "\n           السبب:",
+      saveErr?.message || String(saveErr),
+      "\n           الحل المقترح: شغّل نقطة النهاية /api/debug/db-sync لإنشاء جداول الجلسات."
+    );
   }
 
   res.json({ user: updated });
