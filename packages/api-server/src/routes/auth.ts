@@ -88,13 +88,16 @@ router.post("/auth/telegram", async (req, res) => {
 
 router.get("/auth/me", (req, res) => {
   if (!req.isAuthenticated?.()) return res.status(401).json({ error: "غير مسجّل الدخول" });
-  // تحقق إضافي صارم: المستخدم المخزّن في الجلسة يجب أن يملك id رقمي
-  // حتى لو حصل خلل في serializeUser أو كان req.user كائناً فارغاً أو مُقالعاً
   const uid = (req.user as any)?.id;
   if (typeof uid !== "number" || isNaN(uid)) {
-    // الجلسة تالفة → ندمّرها ونجيب أن المستخدم غير مسجّل
     req.session?.destroy?.(() => {});
     return res.status(401).json({ error: "جلسة غير صالحة، يرجى تسجيل الدخول مجدداً" });
+  }
+  if ((req.user as any)?.isBanned) {
+    req.logout?.() as any;
+    req.session?.destroy?.(() => {});
+    res.clearCookie("connect.sid");
+    return res.status(403).json({ error: "هذا الحساب محظور، يرجى التواصل مع الإدارة" });
   }
   res.json({ user: req.user });
 });

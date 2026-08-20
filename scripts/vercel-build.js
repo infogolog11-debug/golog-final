@@ -111,15 +111,39 @@ async function main() {
 
   if (process.env.DATABASE_URL) {
     log("DATABASE_URL found! Running drizzle-kit push to sync DB schema...");
+    log("------------------------------------------------------------");
+    log("⚠️  إذا فشلت هذه الخطوة فلن تُنشئ جداول المستخدمين والرحلات،");
+    log("   وسيظهر خطأ google_internal عند محاولة تسجيل الدخول.");
+    log("   بعد النشر تستطيع تشغيلها يدوياً عبر:");
+    log("   curl \"" + (process.env.PUBLIC_URL || "https://<your-project>.vercel.app") + "/api/debug/db-sync?secret=<DB_SYNC_SECRET>\"");
+    log("------------------------------------------------------------");
     const ok = runSoft("npx drizzle-kit push --config ./drizzle.config.ts", DB_DIR);
     if (ok) {
       log("✅ DB schema synced successfully with database");
     } else {
-      log("⚠️  drizzle-kit push failed (non-fatal) — check DB credentials/URL. You can also run manually.");
+      const hr = "\n" + "=".repeat(68);
+      console.error(hr);
+      console.error("🔴  🔴  🔴   drizzle-kit push FAILED — قاعدة البيانات LIKELY NOT CREATED!   🔴  🔴  🔴");
+      console.error(hr);
+      console.error(" الأسباب الأكثر شيوعاً:");
+      console.error("  1. DATABASE_URL غير صحيح أو المستخدم لا يملك صلاحيات CREATE TABLE");
+      console.error("  2. SSL mode يتطلب تعطيله أو تفعيله — جرّب إضافة DB_DISABLE_SSL=true");
+      console.error("  3. المزود (Supabase/Neon/Railway) يطلب إضافة IP لقائمة Whitelist");
+      console.error();
+      console.error(" الإصلاح السريع بعد النشر:");
+      console.error("  1. أضف DB_SYNC_SECRET في Vercel Environment Variables");
+      console.error("  2. أعد النشر (Redeploy)");
+      console.error("  3. افتح في المتصفح:");
+      console.error("     /api/debug/db-sync?secret=<قيمة_DB_SYNC_SECRET_التي_أضفتها>");
+      console.error(hr + "\n");
     }
   } else {
-    log("⚠️  DATABASE_URL is NOT set in environment variables — skipping drizzle push (DB schema NOT created).");
-    log("   → Add DATABASE_URL to Vercel Project Settings → Environment Variables, then redeploy.");
+    const hr = "\n" + "=".repeat(68);
+    console.warn(hr);
+    console.warn("🟡  DATABASE_URL غير متوفر — تخطي إنشاء جداول قاعدة البيانات!");
+    console.warn("    لن تعمل أي ميزة (تسجيل دخول، رحلات، حجوزات) حتى تضيفه.");
+    console.warn("    أضفه من Vercel → Project Settings → Environment Variables، ثم أعد النشر.");
+    console.warn(hr + "\n");
   }
 
   // ------------------------------------------------------------

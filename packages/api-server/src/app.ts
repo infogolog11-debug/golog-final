@@ -74,19 +74,36 @@ const authLimiter = rateLimit({
 app.use("/api/auth", authLimiter);
 
 const sameSite = COOKIE_SAME_SITE;
+// SameSite=None يتطلب Secure إلزاماً بلا استثناء، وإلا
+// سيحظرها Chrome/Firefox/Safari صراحةً على HTTPS.
+// نُجبر secure=true دائماً إذا كان sameSite="none" أو إذا كنا
+// في بيئة إنتاج HTTPS (حماية إضافية).
+const cookieSecure = sameSite === "none" ? true : IS_PRODUCTION;
 
 const PgSession = ConnectPgSimple(session);
 
 app.use(
   session({
-    store: new PgSession({ pool, tableName: "user_sessions", createTableIfMissing: true }),
+    store: new PgSession({
+      pool,
+      tableName: "user_sessions",
+      createTableIfMissing: true,
+      // تفتيت الجلسات التي انتهت صلاحيتها كل 15 دقيقة (بدلاً من الافتراضي 1 ساعة)
+      // لكي لا يتورم جدول user_sessions بالجلسات الميتة على Vercel طويل الأمد.
+      pruneSessionInterval: 15 * 60,
+      errorLog: (...args: any[]) => {
+        console.error("[connect-pg-simple] ERROR:", ...args);
+      },
+    }),
     secret: SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
+    name: "connect.sid",
     cookie: {
-      secure: sameSite === "none" ? true : IS_PRODUCTION,
+      secure: cookieSecure,
       httpOnly: true,
       sameSite,
+      path: "/",
       maxAge: 7 * 24 * 60 * 60 * 1000,
     },
   }),

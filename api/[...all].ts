@@ -1,12 +1,11 @@
 /* ============================================================
-   Vercel Catch-All Route (ROOT LEVEL — الأكثر توافقاً على الإطلاق!)
-   هذا الملف وحده يكفي لالتقاط كل مسارات /api/* تلقائياً بدون الحاجة
-   إلى أي rewrites مخصّصة في vercel.json.
+   نقطة دخول Vercel الوحيدة والوحيدة لجميع مسارات /api/*
+   (Catch-All الموحّد — لا تعارض، لا ازدواج، لا غموض في الأولويات)
    ============================================================ */
 
 process.env.NODE_ENV = process.env.NODE_ENV || "production";
 
-// تحميل متغيرات البيئة محلياً فقط
+// تحميل متغيرات البيئة محلياً فقط (على Vercel تكون جاهزة مسبقاً)
 if (!process.env.VERCEL) {
   try {
     const fs = require("fs");
@@ -22,6 +21,7 @@ if (!process.env.VERCEL) {
 }
 
 let cachedApp: any = null;
+
 function getExpressApp() {
   if (cachedApp) return cachedApp;
   try {
@@ -43,9 +43,10 @@ export default async function handler(req: any, res: any) {
       return res.status(500).json({
         error: "API failed to boot",
         appType: typeof app,
+        tip: "تأكد من نجاح مرحلة البناء (vercel-build) وأن مجلد _api_bundle/app.bundle.js موجود بعد Build Logs.",
       });
     }
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       app(req, res, (err?: any) => {
         if (err) {
           console.error("[vercel catch-all] Express error:", err);
@@ -61,10 +62,9 @@ export default async function handler(req: any, res: any) {
     });
   } catch (e: any) {
     console.error("[vercel catch-all] FATAL:", e);
-    const message = e?.message || String(e);
     return res.status(500).json({
       error: "API crashed",
-      message,
+      message: e?.message || String(e),
       stack: process.env.NODE_ENV === "production" ? undefined : e?.stack,
     });
   }

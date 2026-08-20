@@ -89,7 +89,14 @@ passport.deserializeUser(async (id: number, done) => {
       .from(usersTable)
       .where(eq(usersTable.id, id))
       .limit(1);
-    done(null, user || null);
+    if (!user) return done(null, null);
+    if (user.isBanned) {
+      console.warn(
+        "[passport] ⛔ محاولة دخول لحساب محظور (id=" + user.id + ", name=" + user.name + ")"
+      );
+      return done(null, null);
+    }
+    done(null, user);
   } catch (err) {
     done(err as Error);
   }

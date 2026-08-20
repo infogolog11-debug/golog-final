@@ -69,10 +69,36 @@ router.get("/debug/db-sync", (req, res) => {
     return res.status(500).json({ error: "DATABASE_URL غير معرف" });
   }
   try {
-    // المجلد الذي يحتوي على drizzle.config.ts
-    const dbDir = path.resolve(__dirname, "..", "..", "..", "..", "packages", "db");
-    const fallbackDir = path.resolve(process.cwd(), "packages", "db");
-    const workDir = fs.existsSync(path.join(dbDir, "drizzle.config.ts")) ? dbDir : fallbackDir;
+    // البحث عن مجلد db بحيث يعمل مهما كان مسار التشغيل:
+    //   - محلياً عبر tsx:        packages/api-server/src/routes
+    //   - على Vercel بعد Bundle: _api_bundle/
+    // نراجع قائمة مرتبة حسب الأولوية ونختار أول مجلد يحتوي على drizzle.config.ts
+    const candidates = [
+      // بعد الـ Bundle على Vercel: _api_bundle/ → packages/db في الجذر
+      path.resolve(process.cwd(), "packages", "db"),
+      // تشغيل محلي من packages/api-server
+      path.resolve(__dirname, "..", "..", "..", "db"),
+      // تشغيل محلي من جذر المشروع عبر ts-node أعمق
+      path.resolve(__dirname, "..", "..", "..", "..", "packages", "db"),
+      // احتياطي إذا كان cwd هو مجلد packages/api-server نفسه
+      path.resolve(process.cwd(), "..", "db"),
+    ];
+
+    let workDir = null as string | null;
+    for (const c of candidates) {
+      if (fs.existsSync(path.join(c, "drizzle.config.ts"))) {
+        workDir = c;
+        break;
+      }
+    }
+    if (!workDir) {
+      return res.status(500).json({
+        error: "تعذر تحديد موقع مجلد db/packages الذي يحتوي على drizzle.config.ts",
+        candidatesChecked: candidates,
+        cwd: process.cwd(),
+        tip: "أضف DB_SYNC_SECRET في إعدادات Vercel، ثم تأكد من أن packages/db موجودة.",
+      });
+    }
 
     const startAt = Date.now();
     const result = spawnSync("npx", ["drizzle-kit", "push", "--config", "./drizzle.config.ts"], {

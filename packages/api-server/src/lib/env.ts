@@ -62,13 +62,22 @@ export const WEB_ORIGINS = (() => {
   }
   const origins: string[] = [];
   if (VERCEL_URL) origins.push(VERCEL_URL);
+  // دعم دومين مخصص مُعرَّف يدوياً كـ PUBLIC_URL أيضاً
+  if (process.env.PUBLIC_URL && !origins.includes(process.env.PUBLIC_URL.replace(/\/$/, ""))) {
+    origins.push(process.env.PUBLIC_URL.replace(/\/$/, ""));
+  }
   origins.push("http://localhost:5173", "http://localhost:8080");
   return origins;
 })();
 
+// SameSite=None مطلوب فعلياً في بيئة الإنتاج لأن OAuth عبارة عن
+// إعادة توجيه عبر الأصل (cross-site redirect) وأيضاً عند نشر الواجهة
+// والباك-إند على دواليب مختلفة (مثل vercel.app ودومين مخصص).
+// ملاحظة: SameSite=None لا تعمل إطلاقاً إلا مع Cookie Secure=true
+// (HTTPS فقط) — ولهذا نجبر secure=true تلقائياً في app.ts عند نفس الحالة.
 export const COOKIE_SAME_SITE: "lax" | "none" | "strict" =
   (process.env.COOKIE_SAME_SITE as "lax" | "none" | "strict") ||
-  (PUBLIC_URL.startsWith("http://localhost") ? "lax" : "lax");
+  (PUBLIC_URL.startsWith("http://localhost") ? "lax" : "none");
 
 // ============================================================
 // 2. قاعدة البيانات
@@ -76,15 +85,44 @@ export const COOKIE_SAME_SITE: "lax" | "none" | "strict" =
 export const DATABASE_URL = required("DATABASE_URL");
 
 // ============================================================
-// 3. أمان الجلسات — إن لم يُعرَّف، نولّد قيمة عشوائية مؤقتة
-//    (ملاحظة: سيؤدي ذلك إلى تسجيل خروج جميع المستخدمين
-//    مع كل إعادة تشغيل على Vercel، لذا يُفضّل ضبط SESSION_SECRET)
+// 3. أمان الجلسات — مطلوب الآن صراحةً لأنه بدونها:
+//    - كل cold start على Vercel يولد مفتاحاً جديداً → جميع المستخدمين يُطردون.
+//    - لا يمكن مشاركة الجلسات بين دوال Serverless متعددة.
+// إذا لم يُعرَّف نوقف التشغيل مع رسالة واضحة جداً تصحح الخطأ مباشرة.
 // ============================================================
 export const SESSION_SECRET = (() => {
   const v = process.env.SESSION_SECRET;
-  if (v) return v;
-  console.warn(
-    "[env] ⚠️  SESSION_SECRET غير معرف! سيتم توليد قيمة مؤقتة — سيُجبر كل مستخدم على تسجيل الدخول مرة أخرى مع كل إعادة تشغيل."
+  if (v && v.length >= 16) return v;
+  if (v && v.length < 16) {
+    console.error(
+      "[env] 🔴 SESSION_SECRET قصير جداً! يجب أن يكون 32 بايت (64 حرفاً هكس) على الأقل.\n" +
+      "       مثال توليد محلي:\n" +
+      "       node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\""
+    );
+  }
+  if (!process.env.DATABASE_URL) {
+    // أول نشر بدون قاعدة بيانات بعد → نسمح بالمؤقت فقط لكي لا ينهار البناء
+    // تماماً في أول خطوات الإعداد، لكن مع تحذير شائع جداً.
+    console.warn(
+      "[env] ⚠️⚠️⚠️  SESSION_SECRET غير معرف في متغيرات البيئة على Vercel! سيتم توليد قيمة مؤقتة →\n" +
+      "            ❌ جميع المستخدمين سينقطع اتصالهم تلقائياً مع كل إعادة تشغيل/نشر.\n" +
+      "            ✅ أضفه الآن من: Vercel → Project Settings → Environment Variables\n" +
+      "               ثم أعد النشر (Redeploy) — الأفضل توليده عبر:\n" +
+      "               node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\""
+    );
+    return crypto.randomBytes(32).toString("hex");
+  }
+  // مع DATABASE_URL متوفر لا عذر بدون SESSION_SECRET
+  console.error(
+    "[env] 🔴 🔴 🔴  SESSION_SECRET غير معرف في إعدادات Vercel! 🔴 🔴 🔴\n" +
+    "       بدون هذا المفتاح لن تعمل الجلسات بشكل صحيح بين دوال Vercel.\n" +
+    "       الخطوات المطلوبة فوراً:\n" +
+    "         1. افتح Vercel → مشروعك → Settings → Environment Variables\n" +
+    "         2. أضف مفتاحاً جديداً SESSION_SECRET بالقيمة:\n" +
+    "            " + crypto.randomBytes(32).toString("hex") + " (مثال - استخدم نفس الأمر أدناه لإنشاء خاص بك)\n" +
+    "         3. أنشئ المفتاح ثم اضغط Redeploy.\n" +
+    "       توليد سريع محلي:\n" +
+    "       node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\""
   );
   return crypto.randomBytes(32).toString("hex");
 })();

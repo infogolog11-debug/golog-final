@@ -4,6 +4,17 @@ import { eq } from "drizzle-orm";
 
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
   if (!req.isAuthenticated?.()) return res.status(401).json({ error: "غير مسجّل الدخول" });
+  const uid = (req.user as any)?.id;
+  if (typeof uid !== "number" || isNaN(uid)) {
+    req.session?.destroy?.(() => {});
+    return res.status(401).json({ error: "جلسة غير صالحة، يرجى تسجيل الدخول مجدداً" });
+  }
+  if ((req.user as any)?.isBanned) {
+    req.logout?.(() => {
+      req.session?.destroy?.(() => {});
+    });
+    return res.status(403).json({ error: "هذا الحساب محظور، يرجى التواصل مع الإدارة" });
+  }
   next();
 }
 
