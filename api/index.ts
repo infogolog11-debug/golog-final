@@ -1,13 +1,8 @@
 /* ============================================================
-   نقطة دخول Vercel الرسمية لـ /api/*  (المسارات العامة الرئيسية)
-   الحل الأكثر أهمية: Vercel ينزع تلقائياً بادئة مجلد "api/" من
-   req.url داخل أي دالة في مجلد /api. مثلاً:
-     زيارة /api/auth/google  →  داخل الدالة: req.url = "/auth/google"
-   لكن الـ Express Router في app.ts مثبت على "/api" عبر:
-     app.use("/api", router);
-   إذن لو مررنا req.url كما هو فإن Express سيبحث عن /api/auth/google
-   وسيجده فقط /auth/google → 404!
-   لذلك نُعيد إضافة البادئة /api يدوياً قبل تمرير الطلب إلى Express.
+   نقطة دخول Vercel للمسار /api و /api/ (الجذر)
+   مطابقة 100% لـ api/[...all].ts — فقط لتغطية الجذر نفسه
+   لأن [...all] تحتاج شريحة واحدة على الأقل بعد /api/ في بعض
+   إصدارات Vercel.
    ============================================================ */
 
 process.env.NODE_ENV = process.env.NODE_ENV || "production";
@@ -37,15 +32,11 @@ function getExpressApp() {
     cachedApp = mod.default || mod;
     return cachedApp;
   } catch (err) {
-    console.error("[vercel:api] FAILED to load Express app:", err);
+    console.error("[vercel:api/index] FAILED to load Express app:", err);
     throw err;
   }
 }
 
-/**
- * تُعيد إضافة بادئة "/api" إلى req.url و req.originalUrl إذا لم تكن
- * موجودة، لأن Vercel تنزع البادئة تلقائياً داخل مجلد /api.
- */
 function ensureApiPrefix(req: any) {
   const prefix = "/api";
   if (!req.url.startsWith(prefix + "/") && req.url !== prefix) {
@@ -70,7 +61,7 @@ export default async function handler(req: any, res: any) {
     return new Promise((resolve) => {
       app(req, res, (err?: any) => {
         if (err) {
-          console.error("[vercel:api] Express error:", err);
+          console.error("[vercel:api/index] Express error:", err);
           if (!res.headersSent) {
             res.status(500).json({
               error: "Internal server error",
@@ -82,7 +73,7 @@ export default async function handler(req: any, res: any) {
       });
     });
   } catch (e: any) {
-    console.error("[vercel:api] FATAL:", e);
+    console.error("[vercel:api/index] FATAL:", e);
     return res.status(500).json({
       error: "API crashed",
       message: e?.message || String(e),
