@@ -4,20 +4,6 @@
   "installCommand": "npm install",
   "buildCommand": "npm run vercel-build",
   "outputDirectory": "public",
-  "functions": {
-    "api/index.ts": { "maxDuration": 30 },
-    "api/[...all].ts": { "maxDuration": 30 },
-    "api/health.ts": { "maxDuration": 30 },
-    "api/auth/google/index.ts": { "maxDuration": 30 },
-    "api/auth/google/callback.ts": { "maxDuration": 30 },
-    "api/debug/index.ts": { "maxDuration": 30 },
-    "api/debug/[...all].ts": { "maxDuration": 30 },
-    "api/users/[...all].ts": { "maxDuration": 30 },
-    "api/trips/[...all].ts": { "maxDuration": 30 },
-    "api/bookings/[...all].ts": { "maxDuration": 30 },
-    "api/public/[...all].ts": { "maxDuration": 30 },
-    "api/admin/[...all].ts": { "maxDuration": 30 }
-  },
   "cleanUrls": true,
   "trailingSlash": false,
   "headers": [
