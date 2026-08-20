@@ -97,7 +97,6 @@ router.get("/debug/db-sync", (req, res) => {
           workDir = c;
           break;
         }
-        if (!workDir) workDir = c; // أقلّها إذا كان المجلد موجوداً ولكن الملف لم يُحَوِّل بعد
       }
     }
     if (!workDir) {
@@ -110,12 +109,41 @@ router.get("/debug/db-sync", (req, res) => {
     }
 
     const startAt = Date.now();
-    const result = spawnSync("npx", ["drizzle-kit", "push", "--config", "./drizzle.config.ts"], {
+
+    // البحث عن مثبت محلي لـ drizzle-kit في node_modules لتجنب npx وHOME التي تفشل
+    // أحياناً على Vercel بسبب عدم وجود /home/<user> قابل للكتابة.
+    function findDrizzleKitBin(): { cmd: string; args: string[] } | null {
+      const searchPaths = [
+        path.resolve(cwdNow, "node_modules", ".bin", "drizzle-kit"),
+        path.resolve(cwdNow, "..", "node_modules", ".bin", "drizzle-kit"),
+        path.resolve(workDir || cwdNow, "..", "..", "node_modules", ".bin", "drizzle-kit"),
+        path.resolve(workDir || cwdNow, "node_modules", ".bin", "drizzle-kit"),
+      ];
+      for (const p of searchPaths) {
+        if (fs.existsSync(p)) return { cmd: p, args: ["push", "--config", "./drizzle.config.ts"] };
+        if (fs.existsSync(p + ".cmd")) return { cmd: p + ".cmd", args: ["push", "--config", "./drizzle.config.ts"] };
+      }
+      return null;
+    }
+
+    const localBin = findDrizzleKitBin();
+    const envForChild = Object.assign({}, process.env, {
+      CI: "true",
+      HOME: process.env.HOME || "/tmp",
+      XDG_CONFIG_HOME: "/tmp",
+      NPM_CONFIG_CACHE: "/tmp/.npm-cache",
+      npm_config_cache: "/tmp/.npm-cache",
+    });
+
+    const runCmd = localBin ? localBin.cmd : "npx";
+    const runArgs = localBin ? localBin.args : ["drizzle-kit", "push", "--config", "./drizzle.config.ts"];
+
+    const result = spawnSync(runCmd, runArgs, {
       cwd: workDir,
       shell: true,
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 60_000,
-      env: Object.assign({}, process.env, { CI: "true" }),
+      env: envForChild,
     });
     const durationMs = Date.now() - startAt;
     const stdout = result.stdout?.toString("utf-8") || "";
@@ -126,6 +154,7 @@ router.get("/debug/db-sync", (req, res) => {
       exitCode: result.status,
       durationMs,
       workDir,
+      commandUsed: localBin ? `local drizzle-kit at ${localBin.cmd}` : "npx drizzle-kit (HOME=" + (envForChild.HOME) + ")",
       stdout,
       stderr,
       tip: result.status === 0
