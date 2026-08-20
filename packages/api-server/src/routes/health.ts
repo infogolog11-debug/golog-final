@@ -94,7 +94,7 @@ router.get("/debug/db-sync", async (req, res) => {
           photo_url TEXT,
           gender gender,
           phone TEXT,
-          current_role role NOT NULL DEFAULT 'passenger',
+          "current_role" role NOT NULL DEFAULT 'passenger',
           car_type TEXT,
           car_model TEXT,
           car_color TEXT,
