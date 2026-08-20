@@ -195,4 +195,90 @@ if (staticDir) {
   });
 }
 
+/* ============================================================
+   معالج أخطاء عالمي (Global Error Handler)
+   ------------------------------------------------------------
+   هذا الميدلوير يُعالج أي استثناء لم يُعالج من قبل أي مسار أو
+   ميدلوير سابق. بدلاً من أن يُرجع صفحة خطأ فارغة (500) من
+   الـ Vercel أو يوجه للمستخدم إلى /auth بصمت بدون أي سبب،
+   قمنا بتسجيل الخطأ في الـ Logs مع التفاصيل وإرجاع:
+     • JSON خطأ مفصل لأي مسار /api/... (طلبات API)
+     • إعادة توجيه إلى /auth مع ?error و ?debug لأي خطأ
+       مرتبط بالمصادقة أو الجلسات (تلك التي كانت تصنعنا
+       بالعودة إلى صفحة الهبوط بدون أي رسالة).
+   ============================================================ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+app.use(function globalErrorHandler(err: any, req: any, res: any, _next: any) {
+  const message = err?.message || String(err || "خطأ داخلي غير متوقع");
+  const stack = err?.stack;
+  const url = (req.originalUrl || req.url || "").toString();
+  const method = (req.method || "GET").toString();
+
+  // تسجيل الدخول في Runtime Logs
+  console.error(
+    `[GlobalErrorHandler] ❌ ${method} ${url}\n` +
+      `  Message: ${message}\n` +
+      (stack ? `  Stack: ${stack.split("\n").slice(0, 3).join("\n         ")}\n` : "")
+  );
+
+  // ----- إذا كان الطلب مسار API → أعد JSON مع وضع تفاصيل الخطأ -----
+  if (url.startsWith("/api")) {
+    // الحالات الخاصة التي تعني أن الجلسة فشلت:
+    const isSessionRelated =
+      /session|connect-pg|sessions|relation.*user_sessions|cookie|secret/i.test(message) ||
+      /session|pg-simple/i.test(String(stack || ""));
+
+    // الحالات الخاصة بمصادقة Google:
+    const isOAuthRelated =
+      /oauth|google|passport|state_mismatch|client_id|client_secret/i.test(message) ||
+      /googleStrategy|passport.*google|oauth/i.test(String(stack || ""));
+
+    let extraHint: string | undefined;
+    if (isSessionRelated) {
+      extraHint =
+        "مشكلة في جدول الجلسات (user_sessions)! افتح /api/debug/session-test للتأكد ثم شغّل /api/debug/db-sync?secret=<DB_SYNC_SECRET> لإنشائه.";
+    } else if (isOAuthRelated) {
+      extraHint =
+        "مشكلة في إعدادات Google OAuth: تأكد من GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET + GOOGLE_CALLBACK_URL في Environment Variables.";
+    }
+
+    if (res.headersSent) {
+      try { res.end(); } catch { /* ignore */ }
+      return;
+    }
+    return res.status(500).json({
+      error: "internal_error",
+      message,
+      hint: extraHint,
+      debug: IS_PRODUCTION ? undefined : stack,
+    });
+  }
+
+  // ----- إذا كان مسار صفحة ويب (لا يبدأ بـ /api) يحتوي خطأ -----
+  // نحاول توجيهه إلى صفحة /auth مع رسالة الخطأ في query
+  // حتى لا يتلقى المستخدم صفحة بيضاء فارغة 500.
+  try {
+    if (res.headersSent) {
+      try { res.end(); } catch { /* ignore */ }
+      return;
+    }
+    const redirectTo =
+      "/auth?error=server_error&debug=" + encodeURIComponent(message.slice(0, 200));
+    return res.redirect(redirectTo);
+  } catch {
+    try {
+      if (!res.headersSent) {
+        res.status(500).type("html").send(
+          "<!doctype html><html><head><meta charset='utf-8'></head>" +
+          "<body style='font-family:system-ui;padding:3rem'>" +
+          "<h2>خطأ داخلي في الخادم</h2>" +
+          "<p style='white-space:pre-wrap'>" + String(message) + "</p>" +
+          "<a href='/auth'>العودة لصفحة الدخول</a>" +
+          "</body></html>"
+        );
+      }
+    } catch { /* ignore */ }
+  }
+});
+
 export default app;
