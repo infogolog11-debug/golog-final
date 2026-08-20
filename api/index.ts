@@ -1,11 +1,17 @@
 /* ============================================================
-   نقطة دخول Vercel الوحيدة والوحيدة لجميع مسارات /api/*
-   (Catch-All الموحّد — لا تعارض، لا ازدواج، لا غموض في الأولويات)
+   نقطة دخول Vercel الرسمية لـ /api/*  (المسارات العامة الرئيسية)
+   الحل الأكثر أهمية: Vercel ينزع تلقائياً بادئة مجلد "api/" من
+   req.url داخل أي دالة في مجلد /api. مثلاً:
+     زيارة /api/auth/google  →  داخل الدالة: req.url = "/auth/google"
+   لكن الـ Express Router في app.ts مثبت على "/api" عبر:
+     app.use("/api", router);
+   إذن لو مررنا req.url كما هو فإن Express سيبحث عن /api/auth/google
+   وسيجده فقط /auth/google → 404!
+   لذلك نُعيد إضافة البادئة /api يدوياً قبل تمرير الطلب إلى Express.
    ============================================================ */
 
 process.env.NODE_ENV = process.env.NODE_ENV || "production";
 
-// تحميل متغيرات البيئة محلياً فقط (على Vercel تكون جاهزة مسبقاً)
 if (!process.env.VERCEL) {
   try {
     const fs = require("fs");
@@ -31,7 +37,7 @@ function getExpressApp() {
     cachedApp = mod.default || mod;
     return cachedApp;
   } catch (err) {
-    console.error("[vercel catch-all] FAILED to load Express app:", err);
+    console.error("[vercel:api] FAILED to load Express app:", err);
     throw err;
   }
 }
@@ -39,7 +45,6 @@ function getExpressApp() {
 /**
  * تُعيد إضافة بادئة "/api" إلى req.url و req.originalUrl إذا لم تكن
  * موجودة، لأن Vercel تنزع البادئة تلقائياً داخل مجلد /api.
- * هذا هو الحل الأهم الذي كان يسبب 404 في كل مسارات الـ API!
  */
 function ensureApiPrefix(req: any) {
   const prefix = "/api";
@@ -62,10 +67,10 @@ export default async function handler(req: any, res: any) {
         tip: "تأكد من نجاح مرحلة البناء (vercel-build) وأن مجلد _api_bundle/app.bundle.js موجود بعد Build Logs.",
       });
     }
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       app(req, res, (err?: any) => {
         if (err) {
-          console.error("[vercel catch-all] Express error:", err);
+          console.error("[vercel:api] Express error:", err);
           if (!res.headersSent) {
             res.status(500).json({
               error: "Internal server error",
@@ -77,7 +82,7 @@ export default async function handler(req: any, res: any) {
       });
     });
   } catch (e: any) {
-    console.error("[vercel catch-all] FATAL:", e);
+    console.error("[vercel:api] FATAL:", e);
     return res.status(500).json({
       error: "API crashed",
       message: e?.message || String(e),

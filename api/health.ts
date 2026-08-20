@@ -1,11 +1,9 @@
 /* ============================================================
-   نقطة دخول Vercel الوحيدة والوحيدة لجميع مسارات /api/*
-   (Catch-All الموحّد — لا تعارض، لا ازدواج، لا غموض في الأولويات)
+   نقطة دخول Vercel لـ /api/health
    ============================================================ */
 
 process.env.NODE_ENV = process.env.NODE_ENV || "production";
 
-// تحميل متغيرات البيئة محلياً فقط (على Vercel تكون جاهزة مسبقاً)
 if (!process.env.VERCEL) {
   try {
     const fs = require("fs");
@@ -21,7 +19,6 @@ if (!process.env.VERCEL) {
 }
 
 let cachedApp: any = null;
-
 function getExpressApp() {
   if (cachedApp) return cachedApp;
   try {
@@ -31,16 +28,11 @@ function getExpressApp() {
     cachedApp = mod.default || mod;
     return cachedApp;
   } catch (err) {
-    console.error("[vercel catch-all] FAILED to load Express app:", err);
+    console.error("[vercel:api/health] FAILED to load Express app:", err);
     throw err;
   }
 }
 
-/**
- * تُعيد إضافة بادئة "/api" إلى req.url و req.originalUrl إذا لم تكن
- * موجودة، لأن Vercel تنزع البادئة تلقائياً داخل مجلد /api.
- * هذا هو الحل الأهم الذي كان يسبب 404 في كل مسارات الـ API!
- */
 function ensureApiPrefix(req: any) {
   const prefix = "/api";
   if (!req.url.startsWith(prefix + "/") && req.url !== prefix) {
@@ -56,32 +48,21 @@ export default async function handler(req: any, res: any) {
     ensureApiPrefix(req);
     const app = getExpressApp();
     if (!app || typeof app !== "function") {
-      return res.status(500).json({
-        error: "API failed to boot",
-        appType: typeof app,
-        tip: "تأكد من نجاح مرحلة البناء (vercel-build) وأن مجلد _api_bundle/app.bundle.js موجود بعد Build Logs.",
-      });
+      return res.status(500).json({ error: "API failed to boot", appType: typeof app });
     }
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       app(req, res, (err?: any) => {
         if (err) {
-          console.error("[vercel catch-all] Express error:", err);
+          console.error("[vercel:api/health] Express error:", err);
           if (!res.headersSent) {
-            res.status(500).json({
-              error: "Internal server error",
-              message: err?.message || String(err),
-            });
+            res.status(500).json({ error: "Internal server error", message: err?.message || String(err) });
           }
         }
         resolve(undefined);
       });
     });
   } catch (e: any) {
-    console.error("[vercel catch-all] FATAL:", e);
-    return res.status(500).json({
-      error: "API crashed",
-      message: e?.message || String(e),
-      stack: process.env.NODE_ENV === "production" ? undefined : e?.stack,
-    });
+    const message = e?.message || String(e);
+    return res.status(500).json({ error: "API crashed", message });
   }
 }

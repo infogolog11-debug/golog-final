@@ -5,7 +5,11 @@
   "buildCommand": "npm run vercel-build",
   "outputDirectory": "public",
   "functions": {
-    "api/[...all].ts": { "maxDuration": 30 }
+    "api/index.ts": { "maxDuration": 30 },
+    "api/[...all].ts": { "maxDuration": 30 },
+    "api/health.ts": { "maxDuration": 30 },
+    "api/auth/[...all].ts": { "maxDuration": 30 },
+    "api/auth/google/callback.ts": { "maxDuration": 30 }
   },
   "cleanUrls": true,
   "trailingSlash": false,
