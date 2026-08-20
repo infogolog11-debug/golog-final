@@ -92,13 +92,23 @@ export default function AuthPage() {
     // ========== إصلاح خطأ "Bot domain invalid" ==========
     // قبل تحميل Telegram Login Widget: نعرض للمستخدم تعليمات صريحة لكيفية
     // إعداد الدومين في BotFather (لأن هذا هو السبب الحقيقي الوحيد لظهور هذا الخطأ).
-    const currentDomain = (window.location.protocol + "//" + window.location.host).replace(/\/$/, "");
+    const currentDomain = window.location.hostname;
+    const currentOrigin = window.location.protocol + "//" + window.location.host;
     const botUsername = (import.meta.env.VITE_TELEGRAM_BOT_USERNAME || "GologApp_bot");
     const tipDiv = document.createElement("div");
     tipDiv.className = "mb-3 p-3 rounded-lg border border-amber-500/40 bg-amber-500/10 text-[11px] text-amber-900 dark:text-amber-200 whitespace-pre-wrap";
-    tipDiv.textContent =
-      "💡 لإخفاء رسالة 'Bot domain invalid' في زر Telegram:\nافتح @BotFather ثم أرسل: /setdomain " + window.location.hostname;
+    tipDiv.innerHTML =
+      "💡 لإخفاء رسالة <strong>'Bot domain invalid'</strong> لزر Telegram:<br>" +
+      "افتح <strong>@BotFather</strong> على تيليجرام ثم أرسل هذا الأمر حرفياً:<br>" +
+      "<code style='display:inline-block;margin-top:.3rem;padding:.25rem .5rem;background:rgba(0,0,0,.06);border-radius:5px;font-family:ui-monospace,monospace'>/setdomain " + escapeHtml(window.location.hostname) + "</code><br>" +
+      "ثم اختر البوت <strong>" + escapeHtml(botUsername) + "</strong> وأدخل الدومين <code>" + escapeHtml(window.location.hostname) + "</code>.";
     container.appendChild(tipDiv);
+
+    // نلف الـ Widget في div خاص لكي نكتشف إذا ظهر خطأ بداخله
+    const widgetWrap = document.createElement("div");
+    widgetWrap.id = "tg_widget_wrap_" + Date.now();
+    widgetWrap.className = "text-center";
+    container.appendChild(widgetWrap);
 
     const script = document.createElement("script");
     script.src = "https://telegram.org/js/telegram-widget.js?22";
@@ -108,25 +118,56 @@ export default function AuthPage() {
     script.setAttribute("data-request-access", "write");
     script.async = true;
 
-    // إذا لم يتم تحميل الـ Widget بعد 6 ثوانٍ (أو ظهر خطأ Domain)
-    // → نعرض للمستخدم زر "أرسل الأمر إلى BotFather" يفتح رابط محدد مسبقاً
-    let telegramLoaded = false;
-    script.onload = () => { telegramLoaded = true; };
+    let scriptLoadedOk = false;
+    script.onload = () => { scriptLoadedOk = true; };
+
+    // بعد 5 ثوانٍ: نتحقق مما إذا كان الـ Widget قد رفع زر تسجيل الدخول فعلاً
+    // أم أن الـ iframe/script رمز لنص الخطأ "Bot domain invalid". إذا كان الأخير:
+    // نعرض زر fallback مخصص يفتح BotFather مباشرة مع الدومين مملوء مسبقاً.
     setTimeout(() => {
-      if (!telegramLoaded) {
+      const html = widgetWrap.innerHTML;
+      const hasButton =
+        widgetWrap.querySelector("button, iframe, [role='button'], a[href*='telegram']") ||
+        /login|telegram|bot/i.test(html);
+      const hasDomainError =
+        /domain\s*invalid|Bot domain/i.test(html) ||
+        (scriptLoadedOk && widgetWrap.children.length === 0 && html.trim().length < 50);
+
+      // إذا (1) لم يتحمل الزر أبداً، أو (2) كان هناك خطأ Domain واضح
+      if (!hasButton || hasDomainError) {
+        try { widgetWrap.style.display = "none"; } catch {}
         const fallbackDiv = document.createElement("div");
-        fallbackDiv.className = "mt-2 p-2 rounded-md bg-background/50 text-[11px] text-muted-foreground text-center border";
-        const a = document.createElement("a");
-        a.href = `https://t.me/${botUsername}?start=setdomain_${encodeURIComponent(currentDomain)}`;
-        a.target = "_blank";
-        a.rel = "noopener noreferrer";
-        a.className = "text-primary font-semibold";
-        a.textContent = "👉 اضغط هنا لتكوين بوت Telegram تلقائياً (افتح @BotFather)";
-        fallbackDiv.appendChild(a);
+        fallbackDiv.className =
+          "mt-2 p-3 rounded-xl border-dashed border-[2px] " +
+          "border-[#229ED9]/40 bg-[#229ED9]/[0.04] text-center";
+        fallbackDiv.innerHTML =
+          '<p style="margin:0 0 .4rem 0;font-size:12px;color:#374151">' +
+          "📌 تسجيل الدخول عبر تيليجرام متاح بعد إعداد الدومين في BotFather:" +
+          "</p>" +
+          '<div style="padding:.4rem .6rem;margin:.25rem 0 .5rem 0;background:#fff;border-radius:6px;border:1px solid #e5e7eb;font-family:ui-monospace,monospace;font-size:12px;color:#111">' +
+          "/setdomain " + escapeHtml(currentDomain) +
+          "</div>" +
+          '<a target="_blank" rel="noopener noreferrer" ' +
+          'href="https://t.me/BotFather?start=setdomain_' + encodeURIComponent(currentDomain) + '" ' +
+          'style="display:inline-flex;align-items:center;gap:.35rem;padding:.5rem 1rem;border-radius:8px;background:#229ED9;color:#fff;font-weight:600;text-decoration:none;font-size:13px">' +
+          "🧭 افتح @BotFather مباشرة" +
+          "</a>" +
+          '<div style="margin-top:.5rem;font-size:11px;color:#6b7280;line-height:1.6">' +
+          "في BotFather: أرسل <strong>/setdomain</strong> → اختر <strong>" + escapeHtml(botUsername) +
+          "</strong> → اكتب الدومين <strong>" + escapeHtml(currentDomain) + "</strong>." +
+          "</div>";
         container.appendChild(fallbackDiv);
       }
-    }, 6000);
-    container.appendChild(script);
+    }, 5000);
+
+    widgetWrap.appendChild(script);
+
+    // دالة مساعدة للهروب من HTML (تعريف محلي داخل useEffect)
+    function escapeHtml(s: string) {
+      return String(s)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    }
 
     return () => {
       window.onTelegramAuth = undefined;

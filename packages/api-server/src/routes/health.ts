@@ -755,17 +755,28 @@ router.get("/debug/full-report", async (req, res) => {
   //   • لم يتم تشغيل الأمر /setdomain في BotFather لهذا البوت
   //   • أو كان الدومين المعين لا يتطابق مع PUBLIC_URL الحالي بالضبط.
   // إليك الأمر المطلوب الذي يجب على المستخدم تشغيله يدوياً مع @BotFather.
-  const publicDomain = (PUBLIC_URL || "").replace(/^https?:\/\//, "").replace(/\/+$/, "");
-  const defaultBotUsername = "GologApp_bot";
+  const publicDomain =
+    (PUBLIC_URL || "").replace(/^https?:\/\//, "").replace(/\/+$/, "") ||
+    "golog-final.vercel.app";
+  const botUsername = process.env.TELEGRAM_BOT_USERNAME || process.env.VITE_TELEGRAM_BOT_USERNAME || "GologApp_bot";
   checks.push({
     name: "اسم بوت Telegram Login Widget (TELEGRAM_BOT_USERNAME)",
     ok: true,
-    value: process.env.TELEGRAM_BOT_USERNAME || defaultBotUsername,
+    value: botUsername,
     detail:
-      "⚠️ إذا ظهرت رسالة 'Bot domain invalid' في صفحة /auth → هذا يعني أن /setdomain لم يتم تشغيله في @BotFather للبوت أعلاه! " +
-      "افتح المحادثة مع @BotFather وأرسل هذه الرسالة حرفياً (أو أرسل /setdomain ثم اختر البوت ثم أدخل الدومين):\n" +
-      `/setdomain ${publicDomain || "golog-final.vercel.app"}\n\n` +
-      "الدومين المطلوب للمشروع الحالي: https://" + (publicDomain || "golog-final.vercel.app"),
+      "⚠️ إذا ظهرت رسالة 'Bot domain invalid' فوق زر تسجيل الدخول عبر تيليجرام:\n" +
+      "  السبب: بوت تيليجرام لم يتم ربطه بالدومين الحالي بعد (قيود Telegram على Login Widget).\n" +
+      "  الحل (خطوات حرفية، لا يتطلب أي كود):\n" +
+      "    1. افتح تيليجرام وابحث عن: @BotFather\n" +
+      "    2. أرسل له هذه الرسالة حرفياً:\n" +
+      "       /setdomain\n" +
+      "    3. سيطلب منك BotFather اختيار البوت → اختر: " + botUsername + "\n" +
+      "    4. عندما يسألك عن الدومين → أرسل حرفياً:\n" +
+      "       " + publicDomain + "\n" +
+      "    5. (اختياري) إذا سأل عن رابط إعادة التوجيه: https://" + publicDomain + "\n\n" +
+      "  💡 أمر مختصر (أرسله مباشرة لـ @BotFather بدلاً من الخطوات السابقة):\n" +
+      "  /setdomain " + publicDomain + "\n\n" +
+      "الدومين الحالي للمشروع: https://" + publicDomain,
   });
 
   // ========= 5) فحص حالة الجلسة للمستخدم الحالي (مثل session-deep-dump ولكن مختصر) =========
