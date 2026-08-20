@@ -9,9 +9,7 @@
   "headers": [
     {
       "source": "/assets/(.*)",
-      "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
-      ]
+      "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }]
     },
     {
       "source": "/(.*)",
@@ -23,6 +21,29 @@
     }
   ],
   "rewrites": [
+    { "source": "/api/health",                      "destination": "/api/health" },
+    { "source": "/api/debug/:match*",                "destination": "/api/health" },
+    { "source": "/api/auth/google/callback",         "destination": "/api/auth_google_callback" },
+    { "source": "/api/auth/google",                  "destination": "/api/auth_google" },
+    { "source": "/api/auth/:match*",                 "destination": "/api/_catch_all" },
+    { "source": "/api/users/:match*",                "destination": "/api/_catch_all" },
+    { "source": "/api/trips/:match*",                "destination": "/api/_catch_all" },
+    { "source": "/api/bookings/:match*",             "destination": "/api/_catch_all" },
+    { "source": "/api/parcels/:match*",              "destination": "/api/_catch_all" },
+    { "source": "/api/messages/:match*",             "destination": "/api/_catch_all" },
+    { "source": "/api/ratings/:match*",              "destination": "/api/_catch_all" },
+    { "source": "/api/driver-verification/:match*",  "destination": "/api/_catch_all" },
+    { "source": "/api/referrals/:match*",            "destination": "/api/_catch_all" },
+    { "source": "/api/earnings/:match*",             "destination": "/api/_catch_all" },
+    { "source": "/api/notifications/:match*",        "destination": "/api/_catch_all" },
+    { "source": "/api/admin/:match*",                "destination": "/api/_catch_all" },
+    { "source": "/api/reports/:match*",              "destination": "/api/_catch_all" },
+    { "source": "/api/public/:match*",               "destination": "/api/_catch_all" },
+    { "source": "/api/matching/:match*",             "destination": "/api/_catch_all" },
+    { "source": "/api/driver/:match*",               "destination": "/api/_catch_all" },
+    { "source": "/api/rider/:match*",                "destination": "/api/_catch_all" },
+    { "source": "/api/:match*",                      "destination": "/api/_catch_all" },
+    { "source": "/api",                              "destination": "/api/index" },
     {
       "source": "/((?!api/|_next/|_static/|_vercel|[\\w-]+\\.[\\w-]+).*)",
       "destination": "/index.html"
