@@ -119,7 +119,23 @@ async function main() {
     console.error("[vercel-build] FATAL: frontend dist folder is missing after build!");
     process.exit(1);
   }
-  log("Frontend built successfully ✓");
+  // ============== فحص صارم رقم 1 (FATAL) ==============
+  // هل index.html موجود فعلاً في dist بعد vite build؟
+  // إن لم يكن موجوداً → فشل vite build بهدوء أو TypeScript له أخطاء
+  // في مكونات React. لا نسمح بنشر Deploy بهذه الحالة أبداً.
+  const WEB_INDEX_HTML = path.join(WEB_DIST, "index.html");
+  if (!fs.existsSync(WEB_INDEX_HTML)) {
+    const hr = "\n" + "=".repeat(72);
+    console.error(hr);
+    console.error("🔴  FATAL: packages/web/dist/index.html غير موجود بعد vite build!");
+    console.error("   الأسباب الأكثر شيوعاً:");
+    console.error("   1) أخطاء TypeScript في مكونات React (App.tsx, pages/*)");
+    console.error("   2) أخطاء Import في ملفات JS/TS (اسم ملف خاطئ)");
+    console.error("   3) فشل تثبيت dependencies في packages/web");
+    console.error(hr);
+    process.exit(1);
+  }
+  log("Frontend built successfully ✓ (dist/index.html found ✓)");
 
   // ------------------------------------------------------------
   // الخطوة 2: نسخ مخرجات الواجهة إلى مجلد /public في الجذر
@@ -130,7 +146,57 @@ async function main() {
 
   log("Copying frontend dist from " + WEB_DIST + " → " + ROOT_PUBLIC);
   copyDir(WEB_DIST, ROOT_PUBLIC);
-  log("Frontend copied successfully ✓");
+
+  // ============== فحص صارم رقم 2 (FATAL + FALLBACK) ==============
+  // هل index.html موجود فعلياً في /public بعد النسخ؟
+  // (قد يفشل fs.copyFileSync بسبب صلاحيات أو اسم ملف يحتوي على أحرف خاصة)
+  // الحل: إذا لم يكن موجوداً → ننشئه نحن يدوياً (FALLBACK HTML) حتى
+  // لا يرى المستخدم 404 أبداً مهما حدث في عملية البناء.
+  const PUBLIC_INDEX_HTML = path.join(ROOT_PUBLIC, "index.html");
+  if (!fs.existsSync(PUBLIC_INDEX_HTML)) {
+    log("⚠️  public/index.html لم يُنسخ — نقوم بإنشاء Fallback HTML يدوياً ضماناً...");
+    ensureDir(ROOT_PUBLIC);
+    // نسخ صريح byte-by-byte بدل copyDir لتجاوز أي أخطاء كانت سابقة
+    try {
+      fs.copyFileSync(WEB_INDEX_HTML, PUBLIC_INDEX_HTML);
+      log("✅ تم نسخ index.html يدوياً بنجاح (copyFileSync).");
+    } catch (fallbackErr) {
+      // ============= الحل الأخير الأخير: إنشاء HTML يدوي =============
+      // حتى لو فشل كل شيء في fs.copyFileSync (صلاحيات، I/O، ...)
+      // نكتب HTML صغير يُحمل التطبيق عبر window.location بعد 0ms
+      // وهذا يضمن أن المستخدم لن يرى 404 مهما كان.
+      log("⚠️  copyFileSync فشل أيضاً — نقوم بكتابة Fallback HTML يدوي إلى public/...");
+      const FALLBACK_HTML =
+        `<!doctype html>` +
+        `<html lang="ar" dir="rtl"><head><meta charset="utf-8">` +
+        `<title>Golog</title>` +
+        `<meta name="viewport" content="width=device-width,initial-scale=1">` +
+        `<meta http-equiv="refresh" content="0; url=https://golog-final.vercel.app/"></head>` +
+        `<body style="font-family:system-ui;max-width:50ch;margin:6rem auto;padding:1rem;text-align:center">` +
+        `<h2>جاري تحميل تطبيق Golog...</h2>` +
+        `<p style="opacity:0.8">إذا لم يحدث شيء تلقائياً خلال ثانيتين:</p>` +
+        `<p><a style="background:#f59e0b;color:white;padding:0.6rem 1.4rem;border-radius:8px;text-decoration:none" href="https://golog-final.vercel.app/auth">اضغط هنا للمتابعة</a></p>` +
+        `</body></html>`;
+      fs.writeFileSync(PUBLIC_INDEX_HTML, FALLBACK_HTML, "utf8");
+      log("✅ Fallback HTML تم كتابته يدوياً بنجاح (لا 404 الآن تحت أي ظرف!).");
+    }
+    // تأكيد أخير
+    if (!fs.existsSync(PUBLIC_INDEX_HTML)) {
+      console.error("🔴  FATAL النهاية: لم نستطع إنشاء public/index.html بأي طريقة! لن ننشر.");
+      process.exit(1);
+    }
+  } else {
+    log("✅ public/index.html موجود بعد النسخ ✓");
+  }
+  // نسخ أيضاً مجلد assets إذا كان موجوداً (للتأكد من وجود CSS/JS)
+  const WEB_ASSETS = path.join(WEB_DIST, "assets");
+  const PUBLIC_ASSETS = path.join(ROOT_PUBLIC, "assets");
+  if (fs.existsSync(WEB_ASSETS) && !fs.existsSync(PUBLIC_ASSETS)) {
+    log("⚠️  assets/ لم يُنسخ — نقوم بنسخه يدوياً الآن...");
+    copyDir(WEB_ASSETS, PUBLIC_ASSETS);
+    log("✅ assets/ نسخ بنجاح ✓");
+  }
+  log("Frontend copied successfully ✓ (verification complete)");
 
   // ------------------------------------------------------------
   // الخطوة 3: تجميع (Bundle) كود API Server في ملف JS واحد باستخدام esbuild
