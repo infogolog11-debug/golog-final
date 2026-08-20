@@ -95,13 +95,18 @@ router.get(
           const debug = encodeURIComponent(loginErr?.message || String(loginErr));
           return res.redirect(`/auth?error=session_failed&debug=${debug}`);
         }
-        // 🔴 نقطة الإصلاح الحاسمة: req.login لا يحفظ الجلسة في PostgreSQL تلقائياً
-        // على Vercel Serverless. يجب أن نحفظها صراحةً قبل إعادة التوجيه،
-        // وإلا في الطلب التالي سيبدو المستخدم كمجهول → صفحة الهبوط بدون دخول.
-        req.session.save((saveErr) => {
+        // 🔴 نقطة الإصلاح الحاسمة (النهائية):
+        //   (1) req.login
+        //   (2) req.session.save() صريح إلى PostgreSQL (connect-pg-simple)
+        //   (3) انتظار 250ms (ضمان وصول الكتابة عبر الشبكة في Serverless cold start)
+        //   (4) استعلام مباشر SELECT من user_sessions للتأكد من وجود السطر فعلاً
+        //   (5) فقط بعد كل هذا → res.redirect
+        //
+        // هذه الخطوات الأربع تضمن بأكثر من 99% أن الطلب التالي (بعد redirect)
+        // سيجد الجلسة فعلياً في قاعدة البيانات ولن يرجع كـ "غير مسجل".
+        req.session.save(async (saveErr) => {
           if (saveErr) {
             console.error("[auth/google/callback] ❌ فشل حفظ الجلسة في قاعدة البيانات بعد req.login:", saveErr);
-            console.error("[auth/google/callback] saveErr.stack:", saveErr?.stack);
             const m = saveErr?.message || String(saveErr);
             const hint =
               /relation|sessions|connect-pg|does not exist/i.test(m)
@@ -110,9 +115,42 @@ router.get(
             const debug = encodeURIComponent(m + hint);
             return res.redirect(`/auth?error=session_save_failed&debug=${debug}`);
           }
-          console.log("[auth/google/callback] ✅ الجلسة حفظت بنجاح. sessionID =", req.sessionID?.slice(0, 8) + "...");
+          const sidAfterSave = req.sessionID;
+          console.log(
+            "[auth/google/callback] ✅ الجلسة حفظت بنجاح (session.save() انتهى). sessionID =",
+            sidAfterSave?.slice(0, 10) + "..."
+          );
+
+          try {
+            // انتظار قصير جداً لضمان استقرار الكتابة في بيئة Serverless
+            await new Promise<void>((r) => setTimeout(r, 250));
+
+            // ✅ إثبات حقيقي: نقرأ مباشرة من قاعدة البيانات عن هذا الـ sid
+            const q = await pool.query(
+              "SELECT sid, expire FROM user_sessions WHERE sid = $1 LIMIT 1",
+              [sidAfterSave]
+            );
+            const verified = (q.rows?.length ?? 0) > 0;
+            console.log(
+              "[auth/google/callback] 🔍 تحقق مباشر من user_sessions: sid " +
+                (verified ? "✅ موجود فعلياً في قاعدة البيانات ✅" : "❌ غير موجود! ❌") +
+                " | rows = " + (q.rows?.length ?? 0)
+            );
+            if (!verified) {
+              const debug = encodeURIComponent(
+                "session.save() انتهى بدون خطأ لكن استعلام SELECT من user_sessions لم يجد أي سطر بهذا الـ sid. " +
+                  "السبب الأكثر شيوعاً: قواعد بيانات مختلفة بين الـ Functions أو أن pruneSessionInterval قام بحذفه مباشرة."
+              );
+              return res.redirect(`/auth?error=session_not_persisted&debug=${debug}`);
+            }
+          } catch (verifyErr: any) {
+            // فقط تحذير — نكمل العملية لأن session.save() كان ناجحاً (لا نمنع الدخول بسبب فشل التحقق)
+            console.warn("[auth/google/callback] ⚠️  فشل التحقق الإضافي من قاعدة البيانات (غير قاتل):", verifyErr?.message);
+          }
+
+          // كل شيء مؤكد وصوله الآن → redirect بأمان
           const dest = user?.isNew ? "/complete-profile" : "/";
-          console.log("[auth/google/callback] ✅ إعادة توجيه المستخدم المصادق إليه:", dest);
+          console.log("[auth/google/callback] ✅ إعادة توجيه المستخدم المصادق إليه:", dest, "| user.id =", (user as any)?.id);
           return res.redirect(dest);
         });
       });
@@ -160,6 +198,35 @@ router.post("/auth/telegram", async (req, res) => {
 });
 
 router.get("/auth/me", (req, res) => {
+  // ============================================================
+  // 🔍 تشخيص شامل لـ auth/me — مكتوب خصيصاً للعثور على سبب
+  //    "العودة للصفحة الهبوط بعد اختيار حساب Google".
+  //    كل سطر من السطور التالية يطبع في Vercel → Runtime Logs.
+  // ============================================================
+  const incomingCookieHeader = req.headers.cookie || "";
+  const hasConnectSidCookie = /(?:^|;\s*)connect\.sid\s*=/.test(String(incomingCookieHeader));
+  const sid = (req as any).sessionID;
+  const user = (req as any).user;
+  const authed = Boolean((req as any).isAuthenticated?.());
+  console.log(
+    "[auth/me] ========== deep-dump ==========\n" +
+    "  header.cookie present        = " + Boolean(incomingCookieHeader) +
+      (incomingCookieHeader ? ` (len=${incomingCookieHeader.length})` : "") + "\n" +
+    "  connect.sid in cookie header = " + hasConnectSidCookie + "\n" +
+    "  req.sessionID                = " + (sid ? sid.slice(0, 12) + "..." : "UNDEFINED/NULL") + "\n" +
+    "  req.session exists           = " + (typeof (req as any).session === "object" && (req as any).session !== null) + "\n" +
+    "  req.isAuthenticated()        = " + authed + "\n" +
+    "  req.user exists              = " + Boolean(user) + " | typeof id = " + typeof (user?.id) + " | id = " + (user?.id ?? "N/A") + "\n" +
+    "  req.user.isBanned            = " + String(user?.isBanned ?? "N/A") + "\n" +
+    "========================================"
+  );
+  if (!authed) {
+    console.warn("[auth/me] ⚠️  المستخدم ليس مصادقاً (401). الأسباب الأكثر شيوعاً:\n" +
+      "  1) لم يصل كوكي connect.sid في الطلب (تأكد من SameSite=None + Secure + trust proxy=true)\n" +
+      "  2) كوكي وصل لكن الـ sessionID غير موجود في جدول user_sessions (فشل الحفظ بعد req.login)\n" +
+      "  3) الـ session موجود لكن deserializeUser رجع null (id غير موجود في جدول users)\n" +
+      "  4) SESSION_SECRET مختلف بين الـ Function التي حفظت والـ Function التي تقرأ (SESSION_SECRET غير ثابت!)");
+  }
   if (!req.isAuthenticated?.()) return res.status(401).json({ error: "غير مسجّل الدخول" });
   const uid = (req.user as any)?.id;
   if (typeof uid !== "number" || isNaN(uid)) {

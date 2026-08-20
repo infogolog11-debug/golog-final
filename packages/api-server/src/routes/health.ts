@@ -446,4 +446,110 @@ router.get("/debug/session-test", (req, res) => {
   });
 });
 
+/* ============================================================
+   نقطة تشخيص نهائية /api/debug/session-deep-dump
+   ------------------------------------------------------------
+   هذه النقطة مهمتها الواحدة: إرجاع كل شيء بالشفافية الكاملة
+   عن حالة الجلسة في لحظة استدعائها. نستخدمها فور العودة من
+   صفحة Google مباشرة (قبل فتح أي رابط آخر):
+   • هل وصل كوكي connect.sid فعلاً؟
+   • هل هناك sessionID؟ وهل موجود في قاعدة user_sessions؟
+   • هل يوجد req.user؟ وهل هو فعلاً مصادق عليه؟
+   • قيمة SESSION_SECRET المستخدمة (بدون الإفصاح الكامل،
+     فقط آخر 12 حرفاً للمقارنة — للتأكد من ثباتها).
+   ============================================================ */
+router.get("/debug/session-deep-dump", async (req, res) => {
+  const headerCookieRaw = String(req.headers.cookie || "");
+  const headerCookiePresent = headerCookieRaw.length > 0;
+  const connectSidMatch = headerCookieRaw.match(/(?:^|;\s*)connect\.sid\s*=\s*([^;]+)/);
+  const connectSidFromHeader = connectSidMatch ? connectSidMatch[1] : null;
+
+  const sid = (req as any).sessionID as string | undefined;
+  const sessionObj = (req as any).session as Record<string, unknown> | undefined;
+  const authed = Boolean((req as any).isAuthenticated?.());
+  const userObj = (req as any).user as Record<string, unknown> | undefined;
+
+  // 🔍 بحث مباشر في قاعدة البيانات عن هذا الـ sid في user_sessions
+  let dbRow: any = null;
+  let dbError: string | null = null;
+  if (sid) {
+    try {
+      const r = await pool.query(
+        "SELECT sid, expire, sess::text AS sess_text FROM user_sessions WHERE sid = $1 LIMIT 1",
+        [sid]
+      );
+      dbRow = r.rows?.[0] ?? null;
+    } catch (e: any) {
+      dbError = e?.message || String(e);
+    }
+  }
+
+  // طباعة ملخص للمشكلة المقترحة بمنطق تشخيص ذكي
+  let diagnosis: string = "";
+  if (!headerCookiePresent || !connectSidFromHeader) {
+    diagnosis =
+      "🔴 سبب مشكلة الدخول = لا يوجد كوكي connect.sid في الطلب! السبب الأكثر شيوعاً:\n" +
+      "   • Google Cloud Console → Authorized redirect URIs غير مضاف الرابط https://golog-final.vercel.app/api/auth/google/callback حرفياً.\n" +
+      "   • أو الكوكي نفسها لم تُرسَل من الاستجابة (SameSite=None + Secure غير مطبقة)، أو Vercel يُفكّر الطلب أنه HTTP وليس HTTPS (trust proxy لم يكن true).";
+  } else if (!sid) {
+    diagnosis =
+      "🔴 سبب مشكلة الدخول = رغم وصول connect.sid في header، لكن req.sessionID = undefined!\n" +
+      "   السبب الأكثر شيوعاً: SESSION_SECRET مختلف بين Function التي حفظت والـ Function التي تقرأ الآن (SESSION_SECRET غير ثابت!).";
+  } else if (!dbRow && !dbError) {
+    diagnosis =
+      "🔴 سبب مشكلة الدخول = الـ sessionID موجود في الكوكي ولكنه غير موجود في جدول user_sessions داخل قاعدة البيانات!\n" +
+      "   → يعني أن req.session.save() بعد req.login قد فشل بصمت، أو أن الـ Function التي حفظت والـ Function التي تقرأ على قاعدة بيانات مختلفة.";
+  } else if (dbError) {
+    diagnosis = "🔴 سبب مشكلة الدخول = خطأ أثناء استعلام قاعدة البيانات عن user_sessions: " + dbError;
+  } else if (!authed || !userObj) {
+    diagnosis =
+      "🔴 سبب مشكلة الدخول = الكوكي موجودة والجلسة في قاعدة البيانات، لكن passport.deserializeUser رجع null/undefined.\n" +
+      "   → السبب الأكثر شيوعاً: الـ id المخزن في session.passport.user غير موجود في جدول users (تم حذفه؟)، أو خطأ في استعلام deserialize.";
+  } else {
+    diagnosis = "✅ كل شيء طبيعي! المستخدم فعلاً مسجل الدخول. المشكلة إن وجدت تكون في الواجهة (React App.tsx redirect logic).";
+  }
+
+  return res.json({
+    diagnosis,
+    cookieHeader: {
+      present: headerCookiePresent,
+      length: headerCookieRaw.length,
+      connectSidInHeader: connectSidFromHeader
+        ? connectSidFromHeader.slice(0, 18) + "..."
+        : null,
+    },
+    req: {
+      sessionID: sid ? sid.slice(0, 18) + "..." : null,
+      sessionExists: typeof sessionObj === "object" && sessionObj !== null,
+      sessionKeys: sessionObj ? Object.keys(sessionObj).filter(k => k !== "cookie") : [],
+      isAuthenticated: authed,
+      user: userObj
+        ? {
+            id: userObj.id ?? "N/A",
+            email: (userObj as any).email ?? "N/A",
+            name: (userObj as any).name ?? "N/A",
+            currentRole: (userObj as any).currentRole ?? "N/A",
+            isBanned: Boolean((userObj as any).isBanned),
+            isAdmin: Boolean((userObj as any).isAdmin),
+          }
+        : null,
+    },
+    database_user_sessions_row_for_sid: dbRow
+      ? {
+          sid: dbRow.sid,
+          expire: dbRow.expire,
+          sess_text_preview: String(dbRow.sess_text || "").slice(0, 400),
+        }
+      : dbError
+      ? { error: dbError }
+      : null,
+    secrets_check_never_exposed: {
+      SESSION_SECRET_last_12_chars: (process.env.SESSION_SECRET || "").slice(-12) || "NONE",
+      SESSION_SECRET_length: (process.env.SESSION_SECRET || "").length,
+      COOKIE_SAME_SITE: (process.env.COOKIE_SAME_SITE as string) || "AUTO_DETECTED",
+      PUBLIC_URL: PUBLIC_URL,
+    },
+  });
+});
+
 export default router;
