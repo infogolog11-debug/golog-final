@@ -5,8 +5,7 @@
   "buildCommand": "npm run vercel-build",
   "outputDirectory": "public",
   "functions": {
-    "api/index.ts": { "maxDuration": 30 },
-    "api/[...all].ts": { "maxDuration": 30 }
+    "api/index.ts": { "maxDuration": 30 }
   },
   "cleanUrls": true,
   "trailingSlash": false,
@@ -27,8 +26,27 @@
     }
   ],
   "rewrites": [
+    /* ============================================================
+       الإصلاح الأهم والأقوى على الإطلاق للـ Express على Vercel:
+       نُجبر 100% من الطلبات التي تبدأ بـ /api/ على المرور إلى
+       الملف الوحيد api/index.ts — لا نعتمد على Vercel File Router
+       أصلاً في مطابقة مسارات الـ API، فلا يوجد أي مجال لخطأ
+       مطابقة أو تعارض أولويات أو 404 عشوائي في أي مسار مهما كان
+       عميقاً مثل /api/auth/google/callback أو /api/users/me/switch-role.
+       ملاحظة: مصفوفة rewrites تُطبّق من الأعلى للأسفل (ترتيب الأولويات)
+       لذا يجب أن تكون قاعدة الـ API قبل قاعدة الـ SPA Fallback.
+       ============================================================ */
     {
-      "source": "/((?!api/|_next/|_static/|_vercel|[\\w-]+\\.[\\w-]+).*)",
+      "source": "/api/(.*)",
+      "destination": "/api/index.ts"
+    },
+    {
+      "source": "/api",
+      "destination": "/api/index.ts"
+    },
+    /* قاعدة الـ SPA العادية لباقي الطلبات (الواجهة الأمامية) */
+    {
+      "source": "/((?!_next/|_static/|_vercel|[\\w-]+\\.[\\w-]+).*)",
       "destination": "/index.html"
     }
   ]
