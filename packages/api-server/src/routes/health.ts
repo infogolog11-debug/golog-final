@@ -1,5 +1,7 @@
 import { Router } from "express";
 import { pool } from "@golog/db";
+import fs from "fs";
+import path from "path";
 import {
   PUBLIC_URL,
   GOOGLE_CLIENT_ID,
@@ -548,6 +550,220 @@ router.get("/debug/session-deep-dump", async (req, res) => {
       SESSION_SECRET_length: (process.env.SESSION_SECRET || "").length,
       COOKIE_SAME_SITE: (process.env.COOKIE_SAME_SITE as string) || "AUTO_DETECTED",
       PUBLIC_URL: PUBLIC_URL,
+    },
+  });
+});
+
+/* ============================================================
+   🩺 نقطة التشخيص الشاملة النهائية: /api/debug/full-report
+   ------------------------------------------------------------
+   هذه النقطة اختراعناها لأن المستخدم استوقفنا للتخمينات.
+   هذه النقطة تحقق من **كل شيء** ويُرجع سبب المشكلة صراحةً
+   بدون أي تخمين:
+      • هل index.html موجود فعلياً في public/ على الـ Server؟
+      • هل مجلد assets/ موجود؟
+      • هل packages/web/dist موجود بعد البناء؟
+      • ما هو staticDir الذي تستخدمه app.ts فعلياً؟
+      • هل user_sessions موجود في قاعدة البيانات؟
+      • هل GOOGLE_CLIENT_ID معرف؟ و redirect URI المقترح؟
+      • حالة الجلسة للمستخدم الحالي: مصادق عليه أم لا؟
+   الـ Frontend في صفحة /auth ستعرض هذه النتيجة مباشرةً
+   للمستخدم تحت عنوان "تقرير الفحص الذاتي" مع ✅ و ❌ لكل بند.
+   ============================================================ */
+router.get("/debug/full-report", async (req, res) => {
+  const ROOT = process.cwd();
+  const checks: { name: string; ok: boolean; value: string; detail?: string }[] = [];
+
+  // ========= 1) فحص ملفات الواجهة (السبب الرئيسي لـ 404 في /passenger /auth الآن) =========
+  const publicPath = path.join(ROOT, "public");
+  const publicIndex = path.join(publicPath, "index.html");
+  const publicAssets = path.join(publicPath, "assets");
+
+  const webDistPath = path.join(ROOT, "packages", "web", "dist");
+  const webDistIndex = path.join(webDistPath, "index.html");
+
+  const publicDirExists = fs.existsSync(publicPath) && fs.statSync(publicPath).isDirectory();
+  checks.push({
+    name: "مجلد public/ موجود؟",
+    ok: publicDirExists,
+    value: publicDirExists ? "✅ نعم" : "❌ لا",
+    detail: publicDirExists ? `المسار: ${publicPath}` : "مجلد public/ غير موجود على الـ Server. سبب 404 صفحات الواجهة.",
+  });
+
+  if (publicDirExists) {
+    const idxOk = fs.existsSync(publicIndex);
+    const size = idxOk ? Math.round(fs.statSync(publicIndex).size / 1024) : 0;
+    checks.push({
+      name: "public/index.html موجود؟",
+      ok: idxOk,
+      value: idxOk ? `✅ نعم (${size} كيلوبايت)` : "❌ لا (السبب المباشر لـ 404!)",
+      detail: idxOk
+        ? "الملف موجود — Vercel يجب أن يخدمه إذا كانت rewrites صح."
+        : "الملف غير موجود رغم مجلد public موجوداً! فشل عملية النسخ أثناء البناء.",
+    });
+
+    const assetsOk = fs.existsSync(publicAssets) && fs.statSync(publicAssets).isDirectory();
+    let assetsCount = 0;
+    if (assetsOk) {
+      try { assetsCount = fs.readdirSync(publicAssets).length; } catch { /* ignore */ }
+    }
+    checks.push({
+      name: "public/assets/ موجود وبه ملفات؟",
+      ok: assetsOk && assetsCount > 0,
+      value: assetsOk ? `✅ نعم (${assetsCount} ملف)` : assetsOk ? "⚠️ مجلد فارغ" : "❌ مجلد غير موجود",
+      detail: assetsOk
+        ? "CSS/JS للواجهة موجودين."
+        : "ملفات CSS/JS مفقودة! حتى لو ظهر الـ HTML، لن يشتغل React.",
+    });
+  }
+
+  const distExists = fs.existsSync(webDistPath) && fs.statSync(webDistPath).isDirectory();
+  checks.push({
+    name: "packages/web/dist موجود؟ (مخرجات vite build)",
+    ok: distExists,
+    value: distExists ? "✅ نعم" : "❌ لا",
+    detail: distExists
+      ? "مخرجات vite build موجودة على الـ Server."
+      : "فشل vite build بهدوء! يجب تفعيل الفحص FATAL في scripts/vercel-build.js.",
+  });
+  if (distExists) {
+    const distIdx = fs.existsSync(webDistIndex);
+    checks.push({
+      name: "packages/web/dist/index.html موجود؟",
+      ok: distIdx,
+      value: distIdx ? "✅ نعم" : "❌ لا",
+      detail: distIdx ? "النسخة الأصلية موجودة." : "TypeScript أخطاء في مكونات React.",
+    });
+  }
+
+  // ========= 2) فحص staticDir المستخدم فعلياً في app.ts =========
+  const candidatesDirs = [
+    path.join(ROOT, "public"),
+    path.join(ROOT, "..", "public"),
+    path.resolve(__dirname, "..", "..", "public"),
+    path.join(ROOT, "packages", "web", "dist"),
+    path.join(ROOT, "..", "packages", "web", "dist"),
+  ];
+  let foundStatic: string | null = null;
+  for (const p of candidatesDirs) {
+    try {
+      if (fs.existsSync(p) && fs.statSync(p).isDirectory() && fs.existsSync(path.join(p, "index.html"))) {
+        foundStatic = p;
+        break;
+      }
+    } catch { /* ignore */ }
+  }
+  checks.push({
+    name: "هل يعثر Express Fallback على مجلد static؟",
+    ok: !!foundStatic,
+    value: foundStatic ? `✅ نعم → ${path.basename(foundStatic)}` : "❌ لا — لا مجلد لديه index.html",
+    detail: foundStatic
+      ? `المسار الكامل: ${foundStatic}`
+      : "حتى الـ Fallback في app.ts لن يجد أي شيء — تأكد من نجاح vite build + النسخ إلى public.",
+  });
+
+  // ========= 3) فحص قاعدة البيانات =========
+  let dbOK = false;
+  let tablesCount: number | null = null;
+  let sessionsRows = 0;
+  let usersRows = 0;
+  let dbErrMsg: string | null = null;
+  try {
+    const r = await pool.query(
+      "SELECT COUNT(*)::int AS c FROM information_schema.tables WHERE table_schema = 'public'"
+    );
+    tablesCount = r.rows?.[0]?.c ?? 0;
+    dbOK = tablesCount > 0;
+    try { sessionsRows = (await pool.query("SELECT COUNT(*)::int AS c FROM user_sessions")).rows[0].c ?? 0; } catch { sessionsRows = -1; }
+    try { usersRows = (await pool.query("SELECT COUNT(*)::int AS c FROM users")).rows[0].c ?? 0; } catch { usersRows = -1; }
+  } catch (e: any) {
+    dbErrMsg = e?.message || String(e);
+  }
+  checks.push({
+    name: "الاتصال بقاعدة البيانات + وجود جداول؟",
+    ok: dbOK && tablesCount !== null && tablesCount >= 12,
+    value: dbOK
+      ? tablesCount! >= 12
+        ? `✅ متصل + ${tablesCount} جدولاً`
+        : `⚠️ متصل لكن فقط ${tablesCount} جداول (أقل من 12!)`
+      : dbErrMsg
+      ? `❌ خطأ: ${dbErrMsg.slice(0, 60)}`
+      : "❌ لم يرد رد",
+    detail: dbOK
+      ? `عدد مستخدمين: ${usersRows} | عدد الجلسات النشطة: ${sessionsRows}`
+      : "DATABASE_URL خاطئ أو Supabase/Neon/Railway متوقف أو أذونات خاطئة.",
+  });
+
+  // ========= 4) فحص Google OAuth =========
+  const googleConfigured = !!GOOGLE_CLIENT_ID;
+  const expectedCallback = (PUBLIC_URL || "").replace(/\/$/, "") + "/api/auth/google/callback";
+  checks.push({
+    name: "Google OAuth (GOOGLE_CLIENT_ID) مُعرَّف؟",
+    ok: googleConfigured,
+    value: googleConfigured ? "✅ نعم" : "❌ لا",
+    detail: googleConfigured
+      ? `Client ID يبدأ بـ: ${GOOGLE_CLIENT_ID.slice(0, 10)}...`
+      : "أضف GOOGLE_CLIENT_ID و GOOGLE_CLIENT_SECRET في Environment Variables على Vercel ثم أعد النشر.",
+  });
+  if (googleConfigured) {
+    checks.push({
+      name: "Authorized redirect URI المطلوب إضافته في Google Cloud Console",
+      ok: true,
+      value: expectedCallback,
+      detail: "⚠️ تأكد أن هذا الرابط حرفياً موجود في Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Client IDs → Authorized redirect URIs.",
+    });
+  }
+
+  // ========= 5) فحص حالة الجلسة للمستخدم الحالي (مثل session-deep-dump ولكن مختصر) =========
+  const hasSidHeader = /(?:^|;\s*)connect\.sid\s*=\s*[^;]+/.test(String(req.headers.cookie || ""));
+  const isAuthedHere = Boolean((req as any).isAuthenticated?.());
+  const userNow = (req as any).user as any;
+  checks.push({
+    name: "هل كوكي connect.sid وصل في هذا الطلب؟",
+    ok: hasSidHeader,
+    value: hasSidHeader ? "✅ نعم" : "❌ لا",
+    detail: hasSidHeader
+      ? "الكوكي موجود في الطلب."
+      : "الكوكي غير واصل — إما أن SameSite=None+Secure غير مطبقة، أو أنك طلبت الصفحة من خلال HTTP وليس HTTPS.",
+  });
+  checks.push({
+    name: "المستخدم الحالي مسجل الدخول (isAuthenticated)؟",
+    ok: isAuthedHere,
+    value: isAuthedHere
+      ? `✅ نعم — ${String(userNow?.email || userNow?.name || "")}`
+      : "❌ لا",
+    detail: isAuthedHere
+      ? userNow?.currentRole === "driver"
+        ? "مصادق عليه كـ سائق."
+        : "مصادق عليه كـ راكب."
+      : "المشكلة إما في الجلسات (قاعدة البيانات) أو أن الكوكي لم يصل أو فشل حفظها بعد Google callback.",
+  });
+
+  // ========= الخلاصة النهائية (Diagnosis مهني لا تخمين) =========
+  const failed = checks.filter(c => !c.ok);
+  const summary = failed.length === 0
+    ? "✅ كل الفحوصات سليمة! التطبيق جاهز للاستخدام الآن."
+    : `❌ ${failed.length} من ${checks.length} بند بحاجة لإصلاح:` +
+      failed.slice(0, 3).map((c, i) => `\n   ${i + 1}. ${c.name}`).join("");
+
+  // هل المشكلة الحقيقية الآن (حسب لقطة المستخدم الأخيرة للـ 404) هي index.html مفقود؟
+  const criticalFrontendFail = checks.find(c => c.name.startsWith("public/index.html"));
+  const rootCause =
+    criticalFrontendFail && !criticalFrontendFail.ok
+      ? "🔴 السبب الحقيقي الوحيد لـ 404 في صفحة /passenger الآن: public/index.html غير موجود على الـ Server! يعني أن عملية البناء لم تنسخ الملفات إلى public/ أو فشل vite build بهدوء. الحل هو تفعيل الفحص FATAL في scripts/vercel-build.js ثم إعادة النشر."
+      : failed.length === 0
+      ? "🟢 كل شيء سليم — جرّب فتح الصفحة في نافذة خاصة جديدة."
+      : undefined;
+
+  res.json({
+    ok: failed.length === 0,
+    summary,
+    rootCause,
+    checks,
+    timestamp: new Date().toISOString(),
+    server: {
+      PUBLIC_URL,
+      cwd: ROOT,
     },
   });
 });

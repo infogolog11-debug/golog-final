@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useLocation, useSearch } from "wouter";
 import { useTelegramLogin } from "@/lib/queries";
 import { Button } from "@/components/ui/button";
-import { googleLoginUrl } from "@/lib/api";
+import { googleLoginUrl, api } from "@/lib/api";
 import { RouteLine } from "@/components/route-line";
 
 // لا يوجد أي بريد إلكتروني أو كلمة سر هنا إطلاقاً — الدخول حصراً عبر
@@ -31,6 +31,30 @@ export default function AuthPage() {
   const search = useSearch();
   const telegramLogin = useTelegramLogin();
   const telegramRef = useRef<HTMLDivElement>(null);
+
+  // ============== قسم التشخيص التفاعلي (أضيفته الآن بعد طلبك!) ==============
+  // المستخدم استوقفني على التخمينات، لذلك أضفنا واجهة كاملة تشغل
+  // /api/debug/full-report وتعرض السبب الحقيقي على الشاشة مباشرةً بلا أي تخمين.
+  const [diagnosisOpen, setDiagnosisOpen] = useState(false);
+  const [diagnosisLoading, setDiagnosisLoading] = useState(false);
+  const [diagnosisData, setDiagnosisData] = useState<any>(null);
+  const [diagnosisError, setDiagnosisError] = useState<string>("");
+
+  async function runSelfDiagnosis() {
+    setDiagnosisOpen(true);
+    setDiagnosisLoading(true);
+    setDiagnosisError("");
+    try {
+      const r = await api.get<any>("/debug/full-report", { timeout: 12000 });
+      setDiagnosisData(r);
+    } catch (e: any) {
+      setDiagnosisError(
+        "فشل الاتصال بـ API. التفاصيل: " + (e?.message || String(e) || "غير معروف")
+      );
+    } finally {
+      setDiagnosisLoading(false);
+    }
+  }
 
   useEffect(() => {
     const params = new URLSearchParams(search);
@@ -146,6 +170,100 @@ export default function AuthPage() {
           </div>
 
           <div className="flex justify-center" ref={telegramRef} />
+        </div>
+
+        {/* ============================================================
+             🔍 قسم التشخيص الذاتي (أضيفته بعد طلبك — لا تخمين بعد الآن!)
+             عندما لا يعمل الدخول، يضغط المستخدم على هذا الزر ويعرض له
+             كل بند في النظام مع ✅ أو ❌ + السبب الحقيقي المكتوب حرفياً.
+           ============================================================ */}
+        <div className="mt-4">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="w-full text-xs gap-2"
+            onClick={() => {
+              if (!diagnosisOpen) {
+                runSelfDiagnosis();
+              } else {
+                setDiagnosisOpen(false);
+                setDiagnosisData(null);
+                setDiagnosisError("");
+              }
+            }}
+          >
+            🔍 {diagnosisOpen ? "إخفاء تقرير الفحص الذاتي" : "لم يعمل الدخول؟ ابدأ الفحص الذاتي السريع"}
+          </Button>
+
+          {diagnosisOpen && (
+            <div className="mt-3 p-4 rounded-xl border bg-background/50 shadow-sm text-right text-xs space-y-3">
+              <p className="text-muted-foreground">
+                هذا الفحص يتصل مباشرة بالخادم ويتحقق من كل طبقة بنفسه لمعرفة أين المشكلة بالضبط:
+              </p>
+
+              {diagnosisLoading && (
+                <div className="text-primary font-semibold">جاري الفحص الآن... يرجى الانتظار (ثوانٍ قليلة).</div>
+              )}
+
+              {diagnosisError && !diagnosisLoading && (
+                <div className="bg-destructive/10 text-destructive rounded-lg p-3 whitespace-pre-wrap">
+                  ❌ {diagnosisError}
+                </div>
+              )}
+
+              {diagnosisData && !diagnosisLoading && (
+                <div className="space-y-3">
+                  {/* الخلاصة السريعة */}
+                  <div className={
+                    "rounded-lg p-3 " +
+                    (diagnosisData.ok ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "bg-amber-500/10 text-amber-700 dark:text-amber-300")
+                  }>
+                    <div className="font-bold mb-1">📋 {diagnosisData.summary}</div>
+                    {diagnosisData.rootCause && (
+                      <div className="mt-2 font-semibold whitespace-pre-wrap border-t pt-2 border-amber-500/30">
+                        {diagnosisData.rootCause}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* قائمة الفحوصات بالكامل ✅ / ❌ لكل بند */}
+                  <div className="grid gap-2">
+                    {(diagnosisData.checks || []).map((c: any, i: number) => (
+                      <div
+                        key={i}
+                        className={
+                          "rounded-lg border p-3 " +
+                          (c.ok ? "border-emerald-500/30 bg-emerald-500/5" : "border-destructive/40 bg-destructive/5")
+                        }
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex-1">
+                            <div className="font-semibold text-sm">{c.name}</div>
+                            {c.detail && (
+                              <div className="text-muted-foreground mt-1 whitespace-pre-wrap">{c.detail}</div>
+                            )}
+                          </div>
+                          <div
+                            className={
+                              "shrink-0 px-2 py-1 rounded-md font-bold text-xs " +
+                              (c.ok ? "bg-emerald-500/20 text-emerald-700" : "bg-destructive/20 text-destructive")
+                            }
+                          >
+                            {c.value}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="text-[11px] text-muted-foreground border-t pt-2">
+                    آخر تحديث لهذا التقرير: {String(diagnosisData.timestamp || "")}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <p className="text-center text-xs text-muted-foreground">
