@@ -94,7 +94,7 @@ passport.deserializeUser(async (id: number, done) => {
       console.warn(
         "[passport] ⛔ محاولة دخول لحساب محظور (id=" + user.id + ", name=" + user.name + ")"
       );
-      return done(null, null);
+      return done(new Error("ACCOUNT_BANNED"), null);
     }
     done(null, user);
   } catch (err) {

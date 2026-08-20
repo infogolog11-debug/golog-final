@@ -45,9 +45,23 @@ router.get("/auth/google", (req, res, next) => {
           "/auth?error=google_internal&debug=" + encodeURIComponent(msg + hint)
         );
       }
-      // إذا وصلنا هنا بدون خطأ، يعني passport.authenticate قام بإرسال الـ redirect بنجاح (لن يُنفّذ السطر التالي)
-      console.log("[auth/google] ✅ passport.authenticate انتهى — من المفترض الآن أن يتم إعادة التوجيه إلى صفحة Google.");
-      next?.();
+      // نقطة إصلاح إضافية: قبل أن يُرسل passport إعادة التوجيه إلى صفحة Google،
+      // تأكدنا من أن الـ OAuth state تم حفظه فعلياً في جدول الجلسات.
+      // بدون هذا الحفظ الصريح، أحياناً يفشل الحفظ بصمت على Vercel Serverless،
+      // وبالتالي عند العودة من Google → state_mismatch (فشل بدون سبب).
+      req.session.save((saveErr) => {
+        if (saveErr) {
+          console.error("[auth/google] ❌ فشل حفظ state من OAuth في الجلسة (قبل إعادة التوجيه للـ Google):", saveErr);
+          const m = saveErr?.message || String(saveErr);
+          const hint = /relation|sessions|connect-pg|does not exist/i.test(m)
+            ? " — السبب الأغلب: جدول user_sessions غير موجود! افتح /api/debug/db-sync?secret=<DB_SYNC_SECRET> لإنشائه فوراً."
+            : "";
+          return res.redirect(
+            "/auth?error=state_save_failed&debug=" + encodeURIComponent(m + hint)
+          );
+        }
+        console.log("[auth/google] ✅ passport.authenticate انتهى + session.save نجح — من المفترض الآن إعادة التوجيه إلى صفحة Google.");
+      });
     });
   } catch (topLevelErr: any) {
     console.error("[auth/google] ❌ استثناء علوي فاشل في مسار Google:", topLevelErr);
@@ -81,8 +95,26 @@ router.get(
           const debug = encodeURIComponent(loginErr?.message || String(loginErr));
           return res.redirect(`/auth?error=session_failed&debug=${debug}`);
         }
-        const dest = user?.isNew ? "/complete-profile" : "/";
-        return res.redirect(dest);
+        // 🔴 نقطة الإصلاح الحاسمة: req.login لا يحفظ الجلسة في PostgreSQL تلقائياً
+        // على Vercel Serverless. يجب أن نحفظها صراحةً قبل إعادة التوجيه،
+        // وإلا في الطلب التالي سيبدو المستخدم كمجهول → صفحة الهبوط بدون دخول.
+        req.session.save((saveErr) => {
+          if (saveErr) {
+            console.error("[auth/google/callback] ❌ فشل حفظ الجلسة في قاعدة البيانات بعد req.login:", saveErr);
+            console.error("[auth/google/callback] saveErr.stack:", saveErr?.stack);
+            const m = saveErr?.message || String(saveErr);
+            const hint =
+              /relation|sessions|connect-pg|does not exist/i.test(m)
+                ? " — السبب الأغلب: جدول user_sessions غير موجود! افتح /api/debug/db-sync?secret=<DB_SYNC_SECRET> لإنشائه فوراً."
+                : "";
+            const debug = encodeURIComponent(m + hint);
+            return res.redirect(`/auth?error=session_save_failed&debug=${debug}`);
+          }
+          console.log("[auth/google/callback] ✅ الجلسة حفظت بنجاح. sessionID =", req.sessionID?.slice(0, 8) + "...");
+          const dest = user?.isNew ? "/complete-profile" : "/";
+          console.log("[auth/google/callback] ✅ إعادة توجيه المستخدم المصادق إليه:", dest);
+          return res.redirect(dest);
+        });
       });
     })(req, res, next);
   },
