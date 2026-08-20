@@ -19,12 +19,12 @@ function getExpressApp() {
   if (cachedApp) return cachedApp;
   try {
     const path = require("path") as typeof import("path");
-    const bundlePath = path.resolve(__dirname, "..", "..", "_api_bundle", "app.bundle.js");
+    const bundlePath = path.resolve(__dirname, "..", "..", "..", "_api_bundle", "app.bundle.js");
     const mod = require(bundlePath);
     cachedApp = mod.default || mod;
     return cachedApp;
   } catch (err) {
-    console.error("[vercel:api/auth/google] FAILED to load Express app:", err);
+    console.error("[vercel:api/auth/google/index] FAILED to load Express app:", err);
     throw err;
   }
 }
@@ -49,7 +49,7 @@ export default async function handler(req: any, res: any) {
     return new Promise<void>((resolve) => {
       app(req, res, (err?: any) => {
         if (err) {
-          console.error("[vercel:api/auth/google] Express error:", err);
+          console.error("[vercel:api/auth/google/index] Express error:", err);
           if (!res.headersSent) {
             res.status(500).json({ error: "Internal server error", message: err?.message || String(err) });
           }

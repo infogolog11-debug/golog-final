@@ -8,7 +8,7 @@
     "api/index.ts": { "maxDuration": 30 },
     "api/[...all].ts": { "maxDuration": 30 },
     "api/health.ts": { "maxDuration": 30 },
-    "api/auth/google.ts": { "maxDuration": 30 },
+    "api/auth/google/index.ts": { "maxDuration": 30 },
     "api/auth/google/callback.ts": { "maxDuration": 30 }
   },
   "cleanUrls": true,
