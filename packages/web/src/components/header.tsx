@@ -3,6 +3,7 @@ import { useSwitchRole } from "@/lib/queries";
 import type { User } from "@/lib/types";
 import { Button } from "./ui/button";
 import { Car, User as UserIcon } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 /**
  * رأس مبسّط للغاية عمداً: العلامة التجارية + مفتاح تبديل الدور فقط.
@@ -12,12 +13,40 @@ import { Car, User as UserIcon } from "lucide-react";
 export function Header({ user }: { user: User }) {
   const [, setLocation] = useLocation();
   const switchRole = useSwitchRole();
+  const { toast } = useToast();
   const isDriver = user.currentRole === "driver";
 
   const handleSwitchRole = () => {
+    if (switchRole.isPending) return;
     const newRole = isDriver ? "passenger" : "driver";
+    const roleAr = newRole === "driver" ? "السائق" : "الراكب";
+
     switchRole.mutate(newRole, {
-      onSuccess: () => setLocation(newRole === "driver" ? "/driver" : "/passenger"),
+      onSuccess: () => {
+        toast({
+          title: `تم التبديل إلى وضع ${roleAr}`,
+          description: "جاري الانتقال إلى الصفحة المخصصة...",
+        });
+        setLocation(newRole === "driver" ? "/driver" : "/passenger");
+      },
+      onError: (e: any) => {
+        // إذا كانت الخطأ 401 (غير مسجل) → عُد إلى صفحة الدخول
+        if (e?.status === 401) {
+          toast({
+            title: "انتهت صلاحية الجلسة",
+            description: "يرجى تسجيل الدخول مجدداً",
+            variant: "destructive",
+          });
+          setLocation("/auth");
+          return;
+        }
+        toast({
+          title: "تعذر تبديل الدور",
+          description: e?.message || "حاول مرة أخرى بعد لحظات",
+          variant: "destructive",
+        });
+        console.error("[switch-role] ERROR:", e);
+      },
     });
   };
 
@@ -28,8 +57,16 @@ export function Header({ user }: { user: User }) {
           Golog
         </Link>
 
-        <Button variant="outline" size="sm" onClick={handleSwitchRole} className="gap-2" disabled={switchRole.isPending}>
-          {isDriver ? (
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleSwitchRole}
+          className="gap-2"
+          disabled={switchRole.isPending}
+        >
+          {switchRole.isPending ? (
+            <span className="inline-block w-4 h-4 border-2 border-current border-r-transparent rounded-full animate-spin" />
+          ) : isDriver ? (
             <>
               <UserIcon className="h-4 w-4" />
               <span>وضع الراكب</span>

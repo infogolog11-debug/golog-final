@@ -44,6 +44,18 @@ router.post("/users/me/switch-role", requireAuth, async (req, res) => {
     .where(eq(usersTable.id, userId))
     .returning();
 
+  // خطوة مهمة جداً: تحديث كائن req.user في الجلسة (passport.session)
+  // حتى لا تظل الاستجابات التالية (مثل GET /auth/me) تُرجع الدور القديم حتى تسجيل الخروج
+  if (req.user && updated) {
+    (req.user as any) = updated;
+    // passport يخزن نسخة في session.passport.user أيضاً — نُحدثها يدويًا لضمان الاتساق
+    if ((req.session as any)?.passport?.user !== undefined) {
+      (req.session as any).passport.user = updated.id;
+    }
+    // إعادة حفظ الجلسة صراحةً لضمان كتابة التغيير في متجر الجلسات (pg)
+    await new Promise<void>((resolve) => req.session.save(() => resolve()));
+  }
+
   res.json({ user: updated });
 });
 

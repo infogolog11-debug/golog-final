@@ -91,7 +91,15 @@ export function useSwitchRole() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (role: "driver" | "passenger") => api.post<{ user: User }>("/users/me/switch-role", { role }),
-    onSuccess: (res) => qc.setQueryData(qk.me, res.user),
+    onSuccess: (res) => {
+      // ضع الكائن مباشرة في الكاش
+      qc.setQueryData(qk.me, res.user);
+      // لكن أيضًا أجبر إعادة استدعاء /auth/me بعد 300ms للتحقق من قاعدة البيانات
+      // (يتجنب Race Condition إذا كان هناك استعلام آخر يعيد الكائن القديم)
+      setTimeout(() => {
+        qc.invalidateQueries({ queryKey: qk.me });
+      }, 300);
+    },
   });
 }
 
