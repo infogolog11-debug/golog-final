@@ -21,7 +21,14 @@ import { pool } from "@golog/db";
 
 const app: Express = express();
 
-app.set("trust proxy", 1);
+// على Vercel / Cloudflare / أي مزود CDN يكون عدد الـ Proxies المتتالية
+// أكثر من 1 (Load balancer → Edge → Function). الثقة الكلية بجميع الـ proxies
+// ضرورية لكي:
+//   (1) يُعبر req.secure عن HTTPS فعلياً (وليس HTTP من الداخل)
+//   (2) تُرسل الكوكيز ذات علامة Secure: true فعلياً على الإنتاج
+//   (3) يُحسب req.ip بشكل صحيح لـ rate limiting
+// هذا هو الضبط المهني القياسي لمنصات Serverless — لا ينبغي أبداً تحديدها بـ 1.
+app.set("trust proxy", true);
 
 app.use(
   pinoHttp({
