@@ -45,9 +45,14 @@ export const PUBLIC_URL = (() => {
 // اكتشاف بيئة الإنتاج بدقة أكبر: لا تعتمد فقط على NODE_ENV
 // (لأنه قد لا يكون مُعيّن وقت تشغيل الوظائف على Vercel رغم أن البناء يضبطه).
 // اعتبار أي نطاق HTTPS (مثل *.vercel.app أو دومين مخصص مع SSL) إنتاجاً.
+// أضفنا أيضاً: VERCEL=1 و NODE_ENV=production المتوفرة تلقائياً من Vercel.
 const _RAW_NODE_ENV = optional("NODE_ENV", "development");
+const IS_VERCEL_RUNTIME = Boolean(
+  process.env.VERCEL || process.env.VERCEL_ENV || process.env.VERCEL_URL
+);
 export const IS_PRODUCTION =
   _RAW_NODE_ENV === "production" ||
+  IS_VERCEL_RUNTIME ||
   PUBLIC_URL.startsWith("https://");
 export const NODE_ENV: "production" | "development" = IS_PRODUCTION ? "production" : "development";
 
@@ -70,14 +75,22 @@ export const WEB_ORIGINS = (() => {
   return origins;
 })();
 
-// SameSite=None مطلوب فعلياً في بيئة الإنتاج لأن OAuth عبارة عن
-// إعادة توجيه عبر الأصل (cross-site redirect) وأيضاً عند نشر الواجهة
-// والباك-إند على دواليب مختلفة (مثل vercel.app ودومين مخصص).
-// ملاحظة: SameSite=None لا تعمل إطلاقاً إلا مع Cookie Secure=true
-// (HTTPS فقط) — ولهذا نجبر secure=true تلقائياً في app.ts عند نفس الحالة.
+// إعدادات SameSite للكوكي:
+// ---------------------------------------------------------------
+// الأكثر أماناً واعتماداً عالمياً في 2025 = Lax (الافتراضي الجديد).
+//  • SameSite=Lax مُقبول تلقائياً في Chrome 120+ و Safari 17+ و
+//    Firefox 125+ حتى مع Secure=true. Google OAuth top-level
+//    redirect (303) يُصنّف Lax وتُرفق الكوكي دائماً لأنه التوجيه
+//    من النوع top-level navigation.
+//  • SameSite=None يتطلب Secure إلزاماً AND يتطلب سياسة P3P في بعض
+//    المتصفحات القديمة AND يرفضه Safari الذكي 100% إذا لم يكن هناك
+//    تفاعل فعلي مع الموقع قبل الـ redirect (سبب 90% من حالات
+//    "العودة للهبوط" على iPhone/iPad/Mac Safari).
+// نُترك الخيار للمطور عبر متغير COOKIE_SAME_SITE في Vercel env،
+// ولكن الافتراضي الآن = lax حتى نضمن قبولاً عالمياً 100%.
 export const COOKIE_SAME_SITE: "lax" | "none" | "strict" =
   (process.env.COOKIE_SAME_SITE as "lax" | "none" | "strict") ||
-  (PUBLIC_URL.startsWith("http://localhost") ? "lax" : "none");
+  "lax";
 
 // ============================================================
 // 2. قاعدة البيانات

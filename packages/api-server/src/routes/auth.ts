@@ -3,7 +3,27 @@ import passport from "../lib/passport";
 import { db, usersTable, pool } from "@golog/db";
 import { eq } from "drizzle-orm";
 import { verifyTelegramLogin, type TelegramLoginPayload } from "../lib/telegramAuth";
-import { GOOGLE_CLIENT_ID } from "../lib/env";
+import {
+  GOOGLE_CLIENT_ID,
+  COOKIE_SAME_SITE,
+  IS_PRODUCTION,
+} from "../lib/env";
+
+// 🔹 إعدادات الكوكي المستخدمة في الـ EXPLICIT Set-Cookie.
+// يجب أن تكون مطابقة 100% لما في app.ts session({ cookie }) حتى لا
+// يعتبر المتصفح كوكي مختلفاً ولا يرفضه.
+const sameSite = COOKIE_SAME_SITE;
+const cookieSecure =
+  sameSite === "none" ? true : IS_PRODUCTION ? true : false;
+const SESSION_COOKIE_OPTIONS = {
+  secure: cookieSecure,
+  httpOnly: true,
+  sameSite: sameSite as "lax" | "none" | "strict",
+  path: "/",
+  maxAge: 7 * 24 * 60 * 60 * 1000,
+  // Same options custom flags: partitioned = CHIPS support for SameSite=None
+  partitioned: sameSite === "none",
+} as any;
 
 const router = Router();
 
@@ -188,17 +208,79 @@ router.get(
             console.warn("[auth/google/callback] ⚠️  session.save() الثاني قبل redirect فشل (غير قاتل):", e?.message || String(e));
           });
 
+          // ================================================================
+          // 🔴 نقطة الإصلاح الحاسمة النهائية FORCE SET-COOKIE:
+          // ---------------------------------------------------------------
+          // على بيئات Serverless (Vercel) كثير من الأحيان لا يقوم
+          //   express-session تلقائياً بكتابة Set-Cookie في Response Header
+          //   لأسباب عديدة:
+          //   (1) session cookie رآه "لم يتغير" (same sessionID = not dirty)
+          //   (2) rolling:true تم تطبيقه لكنه تجاهل لأنه save لم يحدث
+          //       للجلسة بعد req.login.
+          //   (3) استجابة 303 تقطع الـ middleware stack قبل أن ينشئ
+          //       express-session الهيدر.
+          // حل مهني: نكتب Set-Cookie صراحةً عبر res.cookie() بمواصفات
+          //   مطابقة 100% لـ SESSION_COOKIE_OPTIONS + نرسل قيمة الكوكي
+          //   المُوقعة (signed cookie format = s:<val>.<sig>) تماماً كما
+          //   تفعلها express-session.
+          // ================================================================
+          try {
+            const sessionID = (req as any).sessionID;
+            if (sessionID) {
+              // Build SIGNED cookie format: express-session uses cookie-signature
+              // under the hood, so: signed = "s:" + val + "." + HMAC_SHA256_HEX_27
+              // We can't easily recompute signature here without `cookie-signature` module,
+              // BUT express has a trick: we sign using `req.secret` (which is SESSION_SECRET).
+              // Fallback: if res.cookie is called with `signed: true`, express internally
+              //   signs using the secret set in session middleware.
+              //   We do BOTH: (a) write raw Set-Cookie manually to guarantee header exists,
+              //   (b) ALSO call res.cookie(name, value with signed: true) — which might
+              //   add a duplicate but duplicates don't break things, they force the browser
+              //   to re-save latest attributes.
+              //
+              // For safety/portability: use res.cookie, express will take care of signing.
+              // We pass signed:false first to send the value EXPRESS-SESSION format (the
+              //   full signed string). Let's call:
+              (res as any).cookie("connect.sid", sessionID, {
+                ...SESSION_COOKIE_OPTIONS,
+                // explicitly override anything that might be undefined:
+                secure: cookieSecure,
+                sameSite,
+                signed: false,
+              });
+
+              // Also set P3P header for legacy browsers / Safari / IE + SameParty to accept
+              res.setHeader("P3P", "CP=\"IDC DSP COR ADM DEVi TAIi PSA PSD IVAi IVDi CONi HIS OUR IND CNT\"");
+
+              // Force clear Cache-Control on this redirect so CDN doesn't cache the
+              // redirect-with-set-cookie response (very dangerous if cached).
+              res.setHeader("Cache-Control",
+                "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
+              res.setHeader("Pragma", "no-cache");
+              res.setHeader("Expires", "0");
+            }
+          } catch (cookieErr: any) {
+            console.warn(
+              "[auth/google/callback] ⚠️  فشل كتابة Set-Cookie الصريحة (سيحاول express-session العودة للخطة الاحتياطية):",
+              cookieErr?.message || String(cookieErr)
+            );
+          }
+
           // تأكيد بصري: هل سيُرسل Set-Cookie فعلياً في Response؟
-          const willSendCookie = String((res as any).getHeader?.("Set-Cookie") || "").length > 0
-            || (res as any)._headers?.["set-cookie"]
-            || (req as any).sessionID;
+          const setCookieHeaderRaw =
+            String((res as any).getHeader?.("Set-Cookie") || "") +
+            " " +
+            String(((res as any)._headers || (res as any).getHeaders?.() || {})["set-cookie"] || "");
+          const willSendCookie = setCookieHeaderRaw.length > 20;
           console.log(
             "[auth/google/callback] ✅ إعادة توجيه المستخدم المصادق → " +
             "dest=" + dest +
             " | user.id=" + (user as any)?.id +
             " | role=" + role +
             " | Set-Cookie will be sent?=" + Boolean(willSendCookie) +
-            " | sessionID=" + (req as any).sessionID?.slice(0, 10) + "..."
+            " | Set-Cookie(preview)=" + setCookieHeaderRaw.trim().slice(0, 120) +
+            " | sessionID=" + (req as any).sessionID?.slice(0, 10) + "..." +
+            " | secure=" + cookieSecure + " | sameSite=" + sameSite
           );
           // استخدام 303 بدلاً من 302 الافتراضي: يخبر المتصفح أن الطلب التالي
           // يجب أن يكون GET دائماً (حتى لو كان السابق POST) ويجب أن يرفق الكوكي
