@@ -121,10 +121,10 @@ if ((globalThis as any).__GOLOG_COOKIE_CONFIG_LOGGED__ !== true) {
 
 const PgSession = ConnectPgSimple(session);
 
-// 🔹 توليد Session ID آمن: استخدم دالة مخصصة تُطبّق نفس مفتاح
-// السرية كما هو، وتضمن أن الـ ID طوله 64 هكس (كما تتوقعه connect-pg-simple
-// و express-session). تجنب بعض مشاكل الـ Session Regenerate القديمة.
-const cryptoBuiltin = await import("crypto").catch(() => null);
+// 🔹 توليد Session ID آمن: نستخدم crypto.core مباشرة بدون await في المستوى العلوي
+// (عليه السبب: esbuild يبني لـ CJS و CJS لا يدعم top-level await أبداً →
+//  كان يُسبب فشل Vercel build: "Top-level await is currently not supported with the cjs output format").
+// crypto هو Node.js Core Module متاح دائماً، require() يعمل في ESM/CJS على السواء.
 
 app.use(
   session({
@@ -154,10 +154,14 @@ app.use(
     name: "connect.sid",
     // تأكدنا من السرية: genid دائماً تولّد أرقام عشوائية قوية 32 بايت (64 هكس)
     // بدلاً من الافتراضي (uid-safe 24 بايت) لرفع مستوى الأمان.
+    // 🔴 ملاحظة مهنية: لا يمكن استخدام top-level await هنا (CJS لا يقبلها)،
+    // لذلك نطلب crypto داخل الدالة نفسها عبر require() (مُتاحة دائماً في Node Core).
     genid: function _genid() {
       try {
-        if (cryptoBuiltin && cryptoBuiltin.randomBytes) {
-          return cryptoBuiltin.randomBytes(32).toString("hex");
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const crypto = require("crypto") as typeof import("crypto");
+        if (crypto && crypto.randomBytes) {
+          return crypto.randomBytes(32).toString("hex");
         }
       } catch {}
       // Fallback لـ crypto.webcrypto إذا كان متوفراً
