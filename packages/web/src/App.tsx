@@ -45,7 +45,7 @@ function startsWithAny(path: string, prefixes: string[]) {
 }
 
 function AppContent() {
-  const { data: rawUser, isLoading } = useGetMe({ retry: false });
+  const { data: rawUser, isLoading } = useGetMe({ retry: 3 });
   const [location, setLocation] = useLocation();
 
   const user =

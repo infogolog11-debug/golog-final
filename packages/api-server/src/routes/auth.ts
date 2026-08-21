@@ -17,6 +17,28 @@ router.get("/auth/google", (req, res, next) => {
           encodeURIComponent("أضف GOOGLE_CLIENT_ID و GOOGLE_CLIENT_SECRET في Environment Variables على Vercel ثم أعد النشر.")
       );
     }
+
+    // ============== الخطوة 0: تذكر المسار الذي كان عليه المستخدم قبل الذهاب إلى Google ==============
+    // إذا أتى المستخدم من رابط مثل ?redirect=/passenger → احفظه في session.returnTo
+    // وبالتالي عند العودة من Callback → نعيده إلى نفس المسار بدلاً من الافتراضي.
+    const redirectHint = String(req.query.redirect || req.query.returnTo || "").trim();
+    const refHeader = String(req.headers.referer || "").trim();
+    let returnTo: string | null = null;
+    if (redirectHint && /^\/[A-Za-z0-9_\-\/?=&.%#+]*$/.test(redirectHint) && !redirectHint.startsWith("//")) {
+      returnTo = redirectHint;
+    } else if (refHeader && /passenger|driver|bookings|messages|profile|earnings|points|complete-profile|notifications|admin/i.test(refHeader)) {
+      try {
+        const u = new URL(refHeader);
+        if (u.pathname && u.pathname.length > 1) returnTo = u.pathname + u.search;
+      } catch { /* ignore */ }
+    }
+    if (returnTo && req.session) {
+      (req.session as any).returnTo = returnTo;
+      console.log("[auth/google] ✅ تم حفظ returnTo في الجلسة:", returnTo);
+      // حفظ صريح قبل المتابعة حتى لا يضيع returnTo مع الـ state في Serverless Cold start
+      try { req.session.save(() => {}); } catch {}
+    }
+
     // تسجيل تشخيصي فائق لكي نرى في Vercel Runtime Logs أين يتوقف بالضبط
     console.log("[auth/google] ✅ STEP 1/4: بداية مسار Google — الـ Session ID الحالي:", req.sessionID?.slice(0, 8) + "...");
     console.log("[auth/google] ✅ STEP 2/4: req.session موجودة؟", typeof req.session === "object" && req.session !== null);
@@ -152,9 +174,37 @@ router.get(
           // إلى الصفحة الصحيحة حسب الدور (لا تذهب إلى / أصلاً —
           // حتى لا نعتمد على منطق React الهش في إعادة التوجيه!)
           const role = String((user as any)?.currentRole || "passenger").toLowerCase();
-          const dest = user?.isNew ? "/complete-profile" : role === "driver" ? "/driver" : "/passenger";
-          console.log("[auth/google/callback] ✅ إعادة توجيه المستخدم المصادق إليه:", dest, "| user.id =", (user as any)?.id, "| role =", role);
-          return res.redirect(dest);
+          const defaultDest = user?.isNew ? "/complete-profile" : role === "driver" ? "/driver" : "/passenger";
+          const dest = (req as any).session?.returnTo || defaultDest;
+          delete (req as any).session!.returnTo;
+
+          // تأخير إضافي قصير 250ms + session.save() ثاني بعد تنظيف returnTo
+          // لضمان أن أية تعديلات أخيرة على الجلسة (مثل حذف returnTo) تُحفظ فعلياً
+          // قبل أن نرسل 303 للمستخدم.
+          await new Promise<void>((r) => setTimeout(r, 250));
+          await new Promise<void>((resolve, reject) => {
+            try { req.session?.save((e) => e ? reject(e) : resolve()); } catch (e) { reject(e); }
+          }).catch((e) => {
+            console.warn("[auth/google/callback] ⚠️  session.save() الثاني قبل redirect فشل (غير قاتل):", e?.message || String(e));
+          });
+
+          // تأكيد بصري: هل سيُرسل Set-Cookie فعلياً في Response؟
+          const willSendCookie = String((res as any).getHeader?.("Set-Cookie") || "").length > 0
+            || (res as any)._headers?.["set-cookie"]
+            || (req as any).sessionID;
+          console.log(
+            "[auth/google/callback] ✅ إعادة توجيه المستخدم المصادق → " +
+            "dest=" + dest +
+            " | user.id=" + (user as any)?.id +
+            " | role=" + role +
+            " | Set-Cookie will be sent?=" + Boolean(willSendCookie) +
+            " | sessionID=" + (req as any).sessionID?.slice(0, 10) + "..."
+          );
+          // استخدام 303 بدلاً من 302 الافتراضي: يخبر المتصفح أن الطلب التالي
+          // يجب أن يكون GET دائماً (حتى لو كان السابق POST) ويجب أن يرفق الكوكي
+          // بالضبط كما هو في الموقع الحالي — حل قديم لكن فعال جداً لمنع بعض
+          // مشاكل SameSite=None مع redirects المتتالية على Chrome/Safari.
+          return res.status(303).redirect(dest);
         });
       });
     })(req, res, next);
