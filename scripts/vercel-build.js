@@ -268,6 +268,42 @@ async function main() {
     copyDir(WEB_ASSETS, PUBLIC_ASSETS);
     log("✅ assets/ نسخ بنجاح ✓");
   }
+
+  // ============== ضمان وجود 404.html لصفحة 404 ==============
+  // حتى لو كانت قاعدة الـ Rewrite تعمل بشكل صحيح، Vercel يستخدم 404.html
+  // كصفحة خطأ افتراضية إذا لم يلتقط أي Rewrite الطلب (ضمان إضافي ضد 404 فارغ).
+  const PUBLIC_404_HTML = path.join(ROOT_PUBLIC, "404.html");
+  if (!fs.existsSync(PUBLIC_404_HTML)) {
+    log("⚠️  public/404.html غير موجود — نقوم بإنشائه/نسخه كضمان إضافي...");
+    const WEB_PUBLIC_DIR = path.join(WEB_DIR, "public"); // packages/web/public
+    const SRC_404 = [
+      path.join(WEB_DIST, "404.html"),
+      path.join(WEB_PUBLIC_DIR, "404.html"),
+      path.join(ROOT, "public", "404.html"),
+    ];
+    let copied404 = false;
+    for (const src of SRC_404) {
+      if (fs.existsSync(src)) {
+        try { fs.copyFileSync(src, PUBLIC_404_HTML); copied404 = true; log("✅ تم نسخ 404.html من: " + path.relative(ROOT, src)); break; }
+        catch { /* ignore */ }
+      }
+    }
+    if (!copied404) {
+      log("⚠️  لا يوجد 404.html مصدر — نقوم بإنشاء fallback يدوياً...");
+      const FALLBACK_404 =
+        `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">` +
+        `<meta http-equiv="refresh" content="0; url=/auth"><title>Golog</title></head>` +
+        `<body style="font-family:system-ui;padding:4rem 1rem;text-align:center">` +
+        `<h2>جاري إعادة التوجيه إلى صفحة تسجيل الدخول...</h2>` +
+        `<p>إذا لم يحدث شيء خلال ثانية: <a href="/auth">اضغط هنا</a></p></body></html>`;
+      fs.writeFileSync(PUBLIC_404_HTML, FALLBACK_404, "utf8");
+    }
+    if (!fs.existsSync(PUBLIC_404_HTML)) {
+      log("⚠️  تعذر إنشاء 404.html — لكن الصفحة ستظل تعمل بفضل vercel.json rewrites.");
+    } else {
+      log("✅ 404.html موجود الآن في المخرجات ✓");
+    }
+  }
   log("Frontend copied successfully ✓ (verification complete)");
 
   // ------------------------------------------------------------
