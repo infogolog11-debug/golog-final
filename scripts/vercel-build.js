@@ -213,6 +213,29 @@ async function main() {
   // الخطوة 2: نسخ مخرجات الواجهة إلى مجلد /public في الجذر
   // (مجلد Vercel الافتراضي لخدمة الملفات الثابتة)
   // ------------------------------------------------------------
+  // أولاً — قبل أي تنظيف: نأخذ نسخة احتياطية من public/index.html الفيزيائي
+  // (الذي وضعناه يدوياً في المستودع كـ Fallback نهائي) في مكان مؤقت
+  // لأنه إذا فشل copyDir + copyFileSync أدناه، نستطيع استرجاعه بسرعة.
+  const PHYSICAL_FALLBACK_HTML_PATH = path.join(ROOT, "public", "index.html");
+  let BACKUP_FALLBACK_HTML = null;
+  try {
+    if (fs.existsSync(PHYSICAL_FALLBACK_HTML_PATH)) {
+      BACKUP_FALLBACK_HTML = fs.readFileSync(PHYSICAL_FALLBACK_HTML_PATH, "utf8");
+      if (String(BACKUP_FALLBACK_HTML).length < 3000) BACKUP_FALLBACK_HTML = null; // تجاهل الملفات القصيرة
+      else log("✅ تم أخذ نسخة احتياطية من Fallback HTML الفيزيائي (ملف كامل).");
+    }
+  } catch { /* ignore */ }
+  // جرب أيضاً packages/web/public/index.html
+  try {
+    if (!BACKUP_FALLBACK_HTML) {
+      const p = path.join(WEB_DIR, "public", "index.html");
+      if (fs.existsSync(p)) {
+        const c = fs.readFileSync(p, "utf8");
+        if (String(c).length > 3000) { BACKUP_FALLBACK_HTML = c; log("✅ تم أخذ نسخة احتياطية من Fallback HTML (packages/web/public)."); }
+      }
+    }
+  } catch { /* ignore */ }
+
   log("Cleaning old /public folder at root: " + ROOT_PUBLIC);
   cleanDir(ROOT_PUBLIC);
 
@@ -221,45 +244,103 @@ async function main() {
 
   // ============== فحص صارم رقم 2 (FATAL + FALLBACK) ==============
   // هل index.html موجود فعلياً في /public بعد النسخ؟
-  // (قد يفشل fs.copyFileSync بسبب صلاحيات أو اسم ملف يحتوي على أحرف خاصة)
-  // الحل: إذا لم يكن موجوداً → ننشئه نحن يدوياً (FALLBACK HTML) حتى
-  // لا يرى المستخدم 404 أبداً مهما حدث في عملية البناء.
+  // (قد يفشل copyDir بسبب صلاحيات أو اسم ملف يحتوي على أحرف خاصة)
+  // الحل: طبقات متعددة — إذا لم يكن موجوداً → نسخ احتياطي → كتابة يدوي
   const PUBLIC_INDEX_HTML = path.join(ROOT_PUBLIC, "index.html");
   if (!fs.existsSync(PUBLIC_INDEX_HTML)) {
     log("⚠️  public/index.html لم يُنسخ — نقوم بإنشاء Fallback HTML يدوياً ضماناً...");
     ensureDir(ROOT_PUBLIC);
-    // نسخ صريح byte-by-byte بدل copyDir لتجاوز أي أخطاء كانت سابقة
+
+    // الطبقة 1: BACKUP_FALLBACK_HTML (النسخة الاحتياطية قبل cleanDir) — الأسرع
+    if (BACKUP_FALLBACK_HTML && typeof BACKUP_FALLBACK_HTML === "string" && BACKUP_FALLBACK_HTML.length > 3000) {
+      try {
+        fs.writeFileSync(PUBLIC_INDEX_HTML, BACKUP_FALLBACK_HTML, "utf8");
+        log("✅ الطبقة (1): تم نسخ Fallback HTML من النسخة الاحتياطية قبل cleanDir ✓");
+      } catch { /* فشل → انتقل للطبقة التالية */ }
+    }
+  }
+  if (!fs.existsSync(PUBLIC_INDEX_HTML)) {
+    // الطبقة 2: copyFileSync من dist مباشرة (تجاوز مشاكل copyDir)
     try {
       fs.copyFileSync(WEB_INDEX_HTML, PUBLIC_INDEX_HTML);
-      log("✅ تم نسخ index.html يدوياً بنجاح (copyFileSync).");
-    } catch (fallbackErr) {
-      // ============= الحل الأخير الأخير: إنشاء HTML يدوي =============
-      // حتى لو فشل كل شيء في fs.copyFileSync (صلاحيات، I/O، ...)
-      // نكتب HTML صغير يُحمل التطبيق عبر window.location بعد 0ms
-      // وهذا يضمن أن المستخدم لن يرى 404 مهما كان.
-      log("⚠️  copyFileSync فشل أيضاً — نقوم بكتابة Fallback HTML يدوي إلى public/...");
-      const FALLBACK_HTML =
-        `<!doctype html>` +
-        `<html lang="ar" dir="rtl"><head><meta charset="utf-8">` +
-        `<title>Golog</title>` +
-        `<meta name="viewport" content="width=device-width,initial-scale=1">` +
-        `<meta http-equiv="refresh" content="0; url=https://golog-final.vercel.app/"></head>` +
-        `<body style="font-family:system-ui;max-width:50ch;margin:6rem auto;padding:1rem;text-align:center">` +
-        `<h2>جاري تحميل تطبيق Golog...</h2>` +
-        `<p style="opacity:0.8">إذا لم يحدث شيء تلقائياً خلال ثانيتين:</p>` +
-        `<p><a style="background:#f59e0b;color:white;padding:0.6rem 1.4rem;border-radius:8px;text-decoration:none" href="https://golog-final.vercel.app/auth">اضغط هنا للمتابعة</a></p>` +
-        `</body></html>`;
-      fs.writeFileSync(PUBLIC_INDEX_HTML, FALLBACK_HTML, "utf8");
-      log("✅ Fallback HTML تم كتابته يدوياً بنجاح (لا 404 الآن تحت أي ظرف!).");
-    }
-    // تأكيد أخير
-    if (!fs.existsSync(PUBLIC_INDEX_HTML)) {
-      console.error("🔴  FATAL النهاية: لم نستطع إنشاء public/index.html بأي طريقة! لن ننشر.");
-      process.exit(1);
-    }
-  } else {
-    log("✅ public/index.html موجود بعد النسخ ✓");
+      log("✅ الطبقة (2): copyFileSync من packages/web/dist/index.html ✓");
+    } catch { /* فشل */ }
   }
+  if (!fs.existsSync(PUBLIC_INDEX_HTML)) {
+    // الطبقة 3: قراءة الملفات الفيزيائية الاحتياطية في المستودع
+    let FALLBACK_HTML = "";
+    const fallbackSources = [
+      path.join(ROOT, "public", "index.html"),
+      path.join(WEB_DIR, "public", "index.html"),
+    ];
+    for (const p of fallbackSources) {
+      try {
+        if (fs.existsSync(p)) {
+          const content = fs.readFileSync(p, "utf8");
+          if (String(content).length > 3000) { FALLBACK_HTML = content; break; }
+        }
+      } catch { /* ignore */ }
+    }
+    if (FALLBACK_HTML) {
+      try {
+        fs.writeFileSync(PUBLIC_INDEX_HTML, FALLBACK_HTML, "utf8");
+        log("✅ الطبقة (3): Fallback HTML مكتوب من ملفات المستودع الفيزيائية ✓");
+      } catch { /* فشل */ }
+    }
+  }
+  if (!fs.existsSync(PUBLIC_INDEX_HTML)) {
+    // الطبقة 4 — الأخيرة: كتابة HTML يدوي كامل SPA يعمل بدون React
+    // يحتوي على زر Google حقيقي + فحص auth/me + إعادة توجيه لـ /driver أو /passenger
+    const FULL_SPA_FALLBACK =
+      '<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">' +
+      '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+      '<title>Golog — تسجيل الدخول</title>' +
+      '<link href="https://fonts.googleapis.com/css2?family=Reem+Kufi:wght@400..700&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">' +
+      '<style>' +
+      ':root{--primary:#f59e0b;--bg:#fffaf2;--card:#fff;--text:#1f2937;--muted:#6b7280;--border:#e5e7eb}' +
+      '*{box-sizing:border-box}html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:"IBM Plex Sans Arabic",system-ui,sans-serif}' +
+      '.wrap{min-height:100dvh;width:100%;display:flex;align-items:center;justify-content:center;padding:1rem}' +
+      '.card{width:100%;max-width:520px;background:var(--card);border:1px solid var(--border);border-radius:20px;padding:2rem 1.75rem;box-shadow:0 10px 30px -12px rgba(0,0,0,.08)}' +
+      '.brand{text-align:center;margin-bottom:1.5rem}.brand h1{font-family:"Reem Kufi",sans-serif;font-size:3rem;margin:0 0 .5rem 0;color:var(--primary)}' +
+      '.route-line{display:flex;align-items:center;justify-content:center;gap:.75rem;color:var(--muted);font-size:.9rem;margin-bottom:.25rem}' +
+      '.route-line .dot{width:8px;height:8px;border-radius:9999px;background:var(--primary)}' +
+      '.route-line .bar{width:44px;height:2px;background:repeating-linear-gradient(90deg,var(--primary) 0 6px,transparent 6px 12px);border-radius:9999px}' +
+      '.tagline{text-align:center;color:var(--muted);margin-bottom:1.5rem}' +
+      '.btn{display:inline-flex;align-items:center;justify-content:center;gap:.6rem;width:100%;padding:.8rem 1rem;border-radius:10px;border:2px solid var(--border);background:#fff;color:var(--text);font-size:1rem;font-weight:600;cursor:pointer;text-decoration:none;font-family:inherit;margin:.3rem 0}' +
+      '.btn:hover{border-color:var(--primary);transform:translateY(-1px)}' +
+      '.divider{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:.75rem;color:var(--muted);font-size:.7rem;margin:1.25rem 0}' +
+      '.divider::before,.divider::after{content:"";width:100%;height:1px;background:var(--border)}' +
+      '.alert{border-radius:10px;padding:.9rem 1rem;margin-top:1rem;font-size:.9rem;line-height:1.6;white-space:pre-wrap}' +
+      '.alert-warn{background:rgba(245,158,11,.12);color:#92400e;border:1px solid rgba(245,158,11,.3)}' +
+      '.loader{text-align:center;color:var(--muted);padding:.5rem 0;font-size:.9rem}' +
+      '.spinner{display:inline-block;width:18px;height:18px;border:3px solid var(--border);border-top-color:var(--primary);border-radius:9999px;animation:s 1s linear infinite;vertical-align:-4px;margin-left:.5rem}' +
+      '@keyframes s{to{transform:rotate(360deg)}}' +
+      '.footnote{text-align:center;color:var(--muted);font-size:.75rem;margin-top:1.25rem}' +
+      '.mono{font-family:ui-monospace,monospace;padding:.25rem .5rem;background:rgba(0,0,0,.04);border-radius:6px;display:inline-block;margin-top:.3rem}' +
+      '</style></head><body>' +
+      '<div class="wrap"><div class="card">' +
+      '<div class="brand"><h1>Golog</h1><div class="route-line"><span>حلب</span><span class="dot"></span><span class="bar"></span><span class="dot"></span><span>غازي عنتاب</span></div><div class="tagline">رفقة موثوقة على الطريق بين مدنك</div></div>' +
+      '<div id="app"></div>' +
+      '<div class="footnote">لا حاجة لكلمة سر — دخولك محمي بالكامل عبر حسابك في Google</div>' +
+      '</div></div>' +
+      '<script>' +
+      'const BASE="/api";function gurl(){return BASE+"/auth/google"}' +
+      'function esc(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/\'/g,"&#39;")}' +
+      'async function fj(u,o){try{const r=await fetch(BASE+u,Object.assign({credentials:"include"},o||{}));let d=null;try{d=await r.json()}catch(e){d=null}return{ok:r.ok,status:r.status,data:d}}catch(e){return{ok:false,status:0,data:null,error:e&&e.message?e.message:String(e)}}}' +
+      'async function me(){for(let i=0;i<3;i++){const r=await fj("/auth/me");if(r.ok&&r.data&&typeof(r.data.user||{}).id==="number")return r.data.user;if(i<2)await new Promise(x=>setTimeout(x,800))}return null}' +
+      'function load(h){document.getElementById("app").innerHTML=\'<div class="loader">\'+h+\'</div>\'}' +
+      'function auth(){const d=window.location.hostname;document.getElementById("app").innerHTML=\'<div style="display:flex;flex-direction:column;gap:.75rem"><a class="btn" href="\'+gurl()+\'"><svg width="18" height="18" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg><span>تسجيل الدخول عبر Google</span></a><div class="divider">أو</div><div class="alert alert-warn" style="font-size:.8rem;margin:0">💡 لإخفاء رسالة Bot domain invalid بتيليجرام: افتح @BotFather ثم أرسل: <span class="mono">/setdomain \'+esc(d)+\'</span></div></div>\'}' +
+      '(async function(){load("جاري التحقق من الحالة الحالية... <span class=spinner></span>");const u=await me();if(u){const r=String(u.currentRole||"passenger").toLowerCase();const t=r==="driver"?"/driver":"/passenger";load("✅ تم التعرف عليك! يتم نقلك تلقائياً إلى \'+t+\'... <span class=spinner></span>");setTimeout(()=>{window.location.replace(t)},200);return}auth()})();' +
+      '<\/script></body></html>';
+    fs.writeFileSync(PUBLIC_INDEX_HTML, FULL_SPA_FALLBACK, "utf8");
+    log("✅ الطبقة (4): Fallback HTML الكامل مكتوب يدوياً كـ SPA يعمل بدون React ✓");
+  }
+  // تأكيد نهائي FATAL
+  if (!fs.existsSync(PUBLIC_INDEX_HTML)) {
+    console.error("🔴  FATAL النهاية: فشلت كل الطبقات الأربع في إنشاء public/index.html! لن ننشر كود مكسور.");
+    process.exit(1);
+  }
+  log("✅ public/index.html موجود الآن ✓ (تم بناؤه عبر أحد الطبقات الأربع)");
   // نسخ أيضاً مجلد assets إذا كان موجوداً (للتأكد من وجود CSS/JS)
   const WEB_ASSETS = path.join(WEB_DIST, "assets");
   const PUBLIC_ASSETS = path.join(ROOT_PUBLIC, "assets");
